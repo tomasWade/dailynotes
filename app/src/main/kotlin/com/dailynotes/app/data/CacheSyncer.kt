@@ -1,20 +1,31 @@
 package com.dailynotes.app.data
 
 import android.content.Context
+import kotlinx.coroutines.sync.withLock
 import com.dailynotes.app.diary.DiaryParser
 import com.dailynotes.sync.SyncCoordinator
 import com.dailynotes.sync.WebDavSyncEngine
 
 /** 应用层乐观锁冲突：远端 etag 与本地记录不一致（别处更新/已删除），保存被拒绝。
- *  conflicted 文本已同步留副本到 <relPath>.conflict-local-<时间戳>.md（仅本地缓存，防 pull 覆盖丢输入） */
-class SyncConflictException(val relPath: String, val remoteDeleted: Boolean = false) :
-    Exception("远端已有变更：$relPath")
+ *  copySaved=是否已把用户内容留副本到 <relPath>.conflict-local-<时间戳>.md */
+class SyncConflictException(
+    val relPath: String,
+    val remoteDeleted: Boolean = false,
+    val copySaved: Boolean = false,
+) : Exception("远端已有变更：$relPath")
 
 /**
  * B 档同步门面：SAF 缓存 + cache-state 对账 + WebDAV 推拉删，三端（主页/笔记/编辑器）共用。
  * 所有方法都可能抛异常，由调用方决定提示方式（需求 6：失败仅弹提示）。
  */
 class CacheSyncer(context: Context, private val store: SettingsStore) {
+
+    companion object {
+        // cache-state.json 的 read-modify-write 全局串行锁：CacheSyncer 每次调用方都 new 实例，
+        // 但 pager 相邻页可能并发 recover / pull 并发保存，交错 RMW 会丢 etag 记录或写坏 JSON
+        // （损坏虽可自愈全量重拉，但丢记录会让乐观锁暂时失效退化为 LWW）
+        private val stateMutex = kotlinx.coroutines.sync.Mutex()
+    }
 
     data class PullSummary(
         val updated: Int,
@@ -37,7 +48,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
     private fun coordinator(): SyncCoordinator = SyncCoordinator(engine())
 
     /** 打开/手动同步：etag 对账拉取，写缓存，更新 cache-state（含 lastSync） */
-    suspend fun pull(): PullSummary {
+    suspend fun pull(): PullSummary = stateMutex.withLock {
         val state = CacheState.parse(cache.readState())
         val result = coordinator().pull(state.files)
 
@@ -53,7 +64,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         }
         val now = System.currentTimeMillis()
         cache.writeState(CacheState.dump(files, now))
-        return PullSummary(result.updated.size, result.deleted.size, result.unchangedCount, now)
+        PullSummary(result.updated.size, result.deleted.size, result.unchangedCount, now)
     }
 
     /**
@@ -63,9 +74,9 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
      * 注意调用方应已把 bytes 写入缓存（失败时本地仍有内容可看）。
      * 返回 false=未配置服务器（仅本地模式，不抛异常）。
      */
-    suspend fun push(relPath: String, bytes: ByteArray, text: String): Boolean {
+    suspend fun push(relPath: String, bytes: ByteArray, text: String): Boolean = stateMutex.withLock {
         cache.write(relPath, bytes)
-        if (!serverConfigured()) return false
+        if (!serverConfigured()) return@withLock false
 
         val c = coordinator()
         val state = CacheState.parse(cache.readState())
@@ -84,23 +95,33 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
                 val ext = relPath.substringAfterLast('.', "md")
                 val stem = relPath.removeSuffix(".$ext")
                 val copyPath = "$stem.conflict-local-$stamp.$ext"
-                runCatching { cache.write(copyPath, bytes) }
-                throw SyncConflictException(relPath, remote.isBlank())
+                val copySaved = runCatching { cache.write(copyPath, bytes) }.isSuccess
+                throw SyncConflictException(relPath, remote.isBlank(), copySaved)
             }
         }
 
         for (ref in DiaryParser.attachmentRefs(text)) {
             if (files[ref] == null) {
-                cache.read(ref)?.let { ab -> files[ref] = c.push(ref, ab) }
+                cache.read(ref)?.let { ab ->
+                    val e = c.push(ref, ab)
+                    if (e.isNotBlank()) files[ref] = e
+                }
             }
         }
-        files[relPath] = c.push(relPath, bytes)
+        val newEtag = c.push(relPath, bytes)
+        if (newEtag.isNotBlank()) {
+            files[relPath] = newEtag
+        } else {
+            // PUT 成功但没拿到 etag：移除旧记录（旧 etag 已失效，留着会假冲突），
+            // 下次保存跳过锁检查、pull 对账自愈
+            files.remove(relPath)
+        }
         cache.writeState(CacheState.dump(files, state.lastSync))
         return true
     }
 
     /** 删除：远端删 + 缓存删 + state 移除；远端删失败抛异常（不落本地删除，防止下次拉回造成幽灵复活观感） */
-    suspend fun delete(relPath: String) {
+    suspend fun delete(relPath: String) = stateMutex.withLock {
         val c = coordinator()
         c.delete(relPath)
         cache.delete(relPath)
@@ -110,6 +131,10 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         cache.writeState(CacheState.dump(files, state.lastSync))
     }
 
+    /** state 是否有该文件的远端记录（用于 load 判定「缓存缺失是否危险」） */
+    fun hasRemoteRecord(relPath: String): Boolean =
+        CacheState.parse(cache.readState()).files.containsKey(relPath)
+
     /**
      * 缓存缺失恢复：state 有 etag 记录（远端应有此文件）但本地缓存文件没了
      * （典型：用户手动删了缓存目录里的文件）→ 从远端拉回写缓存。
@@ -117,26 +142,26 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
      * 远端 404（其实已被别处删除）时顺带清掉 state 记录，让后续保存走"新建"语义。
      * 防连锁坑：不恢复的话编辑器显示空白，误保存将用空内容 LWW 覆盖远端。
      */
-    suspend fun recover(relPath: String): ByteArray? {
-        if (!serverConfigured()) return null
+    suspend fun recover(relPath: String): ByteArray? = stateMutex.withLock {
+        if (!serverConfigured()) return@withLock null
         val state = CacheState.parse(cache.readState())
-        if (!state.files.containsKey(relPath)) return null
+        if (!state.files.containsKey(relPath)) return@withLock null
         val files = state.files.toMutableMap()
         try {
             val (bytes, etag) = engine().get(relPath)
             cache.write(relPath, bytes)
             files[relPath] = etag
             cache.writeState(CacheState.dump(files, state.lastSync))
-            return bytes
+            bytes
         } catch (e: com.dailynotes.sync.SyncException) {
             if (e.statusCode == 404) {
                 // 远端已无此文件（别处删除后本地缓存也丢）：清记录，避免空白误保存复活空壳
                 files.remove(relPath)
                 cache.writeState(CacheState.dump(files, state.lastSync))
             }
-            return null
+            null
         } catch (_: Exception) {
-            return null   // 网络问题：保留记录，下次打开再试恢复
+            null   // 网络问题：保留记录，下次打开再试恢复
         }
     }
 }

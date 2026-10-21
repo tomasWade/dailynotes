@@ -114,14 +114,14 @@ fun EditorScreen(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                 )
                             },
-                            enabled = !state.loading,
+                            enabled = !state.loading && !state.loadFailed,
                         ) {
                             Icon(Icons.Filled.Add, contentDescription = "插入图片")
                         }
                         Spacer(Modifier.width(4.dp))
                         Button(
                             onClick = { viewModel.save(onSaved) },
-                            enabled = !state.loading && !state.saving,
+                            enabled = !state.loading && !state.saving && !state.loadFailed,
                             modifier = Modifier.padding(end = 8.dp),
                         ) {
                             if (state.saving) {

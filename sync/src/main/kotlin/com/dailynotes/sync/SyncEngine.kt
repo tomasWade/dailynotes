@@ -9,7 +9,7 @@ interface SyncEngine {
     suspend fun put(path: String, data: ByteArray): Etag
     suspend fun delete(path: String)
     suspend fun mkdir(path: String)
-    /** 单文件当前远端 etag；文件不存在或服务器不支持返回 "" */
+    /** 单文件当前远端 etag；404=远端无此文件返回 ""；其他非 207 响应抛异常（fail-closed，防静默降级 LWW） */
     suspend fun etagOf(path: String): Etag
 
     companion object {

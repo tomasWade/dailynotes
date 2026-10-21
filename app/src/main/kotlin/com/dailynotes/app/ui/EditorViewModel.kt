@@ -26,6 +26,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val error: String? = null,
         val savedOk: Boolean = false,
         val initialPreview: Boolean? = null,   // load 完成：有内容=true（进预览态），空白=false（进编辑态）
+        val loadFailed: Boolean = false,       // 读取彻底失败：禁用保存，防空白覆盖远端
     )
 
     private val store = SettingsStore(app)
@@ -45,18 +46,26 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             }
             val syncer = CacheSyncer(getApplication(), store)
             var readFailed = false
+            var remoteShouldHave = false
             val text: String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 // read 失败不应连带跳过 recover（否则静默空白 → 误保存覆盖远端），各自独立捕获
                 val fromCache = runCatching { syncer.cache.read(relPath)?.toString(Charsets.UTF_8) }
                     .onFailure { readFailed = true }
                     .getOrNull()
-                fromCache ?: runCatching { syncer.recover(relPath)?.toString(Charsets.UTF_8) }.getOrNull()
+                val t = fromCache ?: runCatching { syncer.recover(relPath)?.toString(Charsets.UTF_8) }.getOrNull()
+                // 缓存与恢复都没拿到，但 state 显示远端应有此文件（如断网）→ 危险空白
+                remoteShouldHave = t == null && syncer.hasRemoteRecord(relPath)
+                t
             }
-            if (readFailed && text == null) {
-                // 读取且恢复都失败：绝不静默给空白编辑器（会被误存成空内容覆盖远端）
+            // 读取彻底失败判定（只在「真的没拿到内容」时报错）：
+            // ① read 抛异常且 recover 也没拿到 ② 缓存缺失 + state 显示远端应有但 recover 失败（如断网）
+            // 注意：read 抛异常但 recover 成功（text!=null）→ 正常展示拉回的内容，不进错误态
+            if ((readFailed && text == null) || remoteShouldHave) {
                 _state.value = UiState(
                     relPath,
-                    error = "读取失败（缓存与服务器都未取到内容）。为防误覆盖，请勿保存，先检查存储权限或同步。",
+                    loadFailed = true,
+                    error = "内容读取失败（缓存缺失且未能从服务器恢复，可能断网）。已禁用保存以防覆盖远端；" +
+                        "请恢复网络后在主页点「同步」后重试。",
                 )
                 return@launch
             }
@@ -166,10 +175,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 onSaved()
             } catch (e: com.dailynotes.app.data.SyncConflictException) {
                 val reason = if (e.remoteDeleted) "远端此文件已被删除" else "远端已有更新版本"
+                val copyNote = if (e.copySaved) {
+                    "你的内容已留副本（缓存目录下 *.conflict-local-*.md）；如需继续编辑请先复制文本，再返回点「同步」。"
+                } else {
+                    "本地副本写入失败！如需保留本次内容，请立即全选复制文本，再返回点「同步」。"
+                }
                 _state.value = _state.value.copy(
                     saving = false,
-                    error = "$reason，本次保存未覆盖。你的内容已留副本（缓存目录下 *.conflict-local-*.md）；" +
-                        "如需继续编辑请先复制文本，再返回点「同步」。",
+                    error = "$reason，本次保存未覆盖。$copyNote",
                 )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(

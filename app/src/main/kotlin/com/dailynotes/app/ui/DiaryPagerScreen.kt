@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 
-import com.dailynotes.app.data.SafCache
 import com.dailynotes.app.data.SettingsStore
 import com.dailynotes.app.diary.DiaryEntry
 import com.dailynotes.app.diary.DiaryParser
@@ -119,13 +118,14 @@ private fun PagerPageContent(relPath: String, dataVersion: Long) {
     var text by rememberSaveable(relPath) { mutableStateOf<String?>(null) }
     var viewImage by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // 页面进入视野/数据版本变化时读缓存（编辑保存返回后当前页能刷新）；SAF IO 离开主线程
+    // 页面进入视野/数据版本变化时读缓存（编辑保存返回后当前页能刷新）；SAF IO 离开主线程。
+    // 缓存缺失时走 recover 从远端拉回（与编辑器行为一致，否则这里显示空白）
     LaunchedEffect(relPath, dataVersion) {
         text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val syncer = com.dailynotes.app.data.CacheSyncer(context, SettingsStore(context))
             runCatching {
-                val treeUri = SettingsStore(context).treeUri()
-                if (treeUri.isBlank()) null
-                else SafCache(context, treeUri).read(relPath)?.toString(Charsets.UTF_8)
+                syncer.cache.read(relPath)?.toString(Charsets.UTF_8)
+                    ?: syncer.recover(relPath)?.toString(Charsets.UTF_8)
             }.getOrNull()
         } ?: ""
     }

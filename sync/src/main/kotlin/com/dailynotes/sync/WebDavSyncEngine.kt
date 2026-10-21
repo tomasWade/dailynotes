@@ -106,7 +106,10 @@ class WebDavSyncEngine(
                 resp.header("ETag")
             }
         }
-        return headerEtag ?: fetchEtag(path)
+        if (headerEtag != null) return headerEtag
+        // 内容已上传成功，这里只是补记 etag——宽松处理（失败返回 ""，由调用方决定记录策略），
+        // 不能因取 etag 失败把成功的保存误报成失败
+        return runCatching { fetchEtag(path) }.getOrDefault("")
     }
 
     override suspend fun delete(path: String) = io {
