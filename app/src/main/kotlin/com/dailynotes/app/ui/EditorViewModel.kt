@@ -25,6 +25,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val saving: Boolean = false,
         val error: String? = null,
         val savedOk: Boolean = false,
+        val initialPreview: Boolean? = null,   // load 完成：有内容=true（进预览态），空白=false（进编辑态）
     )
 
     private val store = SettingsStore(app)
@@ -44,7 +45,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             }
             val syncer = CacheSyncer(getApplication(), store)
             val text = runCatching { syncer.cache.read(relPath)?.toString(Charsets.UTF_8) }.getOrNull() ?: ""
-            _state.value = UiState(relPath = relPath, text = text)
+            _state.value = UiState(
+                relPath = relPath,
+                text = text,
+                initialPreview = text.isNotBlank(),
+            )
         }
     }
 

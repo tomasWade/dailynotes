@@ -61,10 +61,24 @@ fun EditorScreen(
     onSaved: () -> Unit,
     viewModel: EditorViewModel = viewModel(),
 ) {
-    LaunchedEffect(relPath) { viewModel.load(relPath) }
     val state by viewModel.state.collectAsState()
     var previewMode by rememberSaveable { mutableStateOf(false) }
+    var modeDecided by rememberSaveable { mutableStateOf(false) }
     var viewImage by rememberSaveable { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(relPath) {
+        modeDecided = false
+        viewModel.load(relPath)
+    }
+
+    // 打开已有内容 → 预览态；新文件/空白 → 编辑态。只决定一次（手动切换、旋转不覆盖）
+    LaunchedEffect(state.initialPreview) {
+        val initial = state.initialPreview
+        if (!modeDecided && initial != null) {
+            previewMode = initial
+            modeDecided = true
+        }
+    }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let(viewModel::insertImage)
