@@ -44,11 +44,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val syncer = CacheSyncer(getApplication(), store)
-            val text = runCatching { syncer.cache.read(relPath)?.toString(Charsets.UTF_8) }.getOrNull() ?: ""
+            val text: String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val fromCache = syncer.cache.read(relPath)?.toString(Charsets.UTF_8)
+                // 缓存文件缺失但 state 显示远端有 → 拉回，防空白误保存覆盖远端
+                fromCache ?: syncer.recover(relPath)?.toString(Charsets.UTF_8)
+            }
             _state.value = UiState(
                 relPath = relPath,
-                text = text,
-                initialPreview = text.isNotBlank(),
+                text = text ?: "",
+                initialPreview = !text.isNullOrBlank(),
             )
         }
     }

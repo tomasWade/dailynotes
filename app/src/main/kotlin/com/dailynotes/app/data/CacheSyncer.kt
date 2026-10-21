@@ -24,10 +24,12 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
     fun serverConfigured(): Boolean =
         store.serverUrl().isNotBlank() && store.username().isNotBlank()
 
-    private fun coordinator(): SyncCoordinator {
+    private fun engine(): com.dailynotes.sync.WebDavSyncEngine {
         val base = (store.serverUrl().trimEnd('/') + "/" + store.rootPath().trim('/')).trimEnd('/')
-        return SyncCoordinator(WebDavSyncEngine(base, store.username(), store.password()))
+        return com.dailynotes.sync.WebDavSyncEngine(base, store.username(), store.password())
     }
+
+    private fun coordinator(): SyncCoordinator = SyncCoordinator(engine())
 
     /** 打开/手动同步：etag 对账拉取，写缓存，更新 cache-state（含 lastSync） */
     suspend fun pull(): PullSummary {
@@ -81,5 +83,35 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         val files = state.files.toMutableMap()
         files.remove(relPath)
         cache.writeState(CacheState.dump(files, state.lastSync))
+    }
+
+    /**
+     * 缓存缺失恢复：state 有 etag 记录（远端应有此文件）但本地缓存文件没了
+     * （典型：用户手动删了缓存目录里的文件）→ 从远端拉回写缓存。
+     * 返回 null = state 无记录 / 未配服务器 / 拉取失败（按新文件处理）。
+     * 远端 404（其实已被别处删除）时顺带清掉 state 记录，让后续保存走"新建"语义。
+     * 防连锁坑：不恢复的话编辑器显示空白，误保存将用空内容 LWW 覆盖远端。
+     */
+    suspend fun recover(relPath: String): ByteArray? {
+        if (!serverConfigured()) return null
+        val state = CacheState.parse(cache.readState())
+        if (!state.files.containsKey(relPath)) return null
+        val files = state.files.toMutableMap()
+        try {
+            val (bytes, etag) = engine().get(relPath)
+            cache.write(relPath, bytes)
+            files[relPath] = etag
+            cache.writeState(CacheState.dump(files, state.lastSync))
+            return bytes
+        } catch (e: com.dailynotes.sync.SyncException) {
+            if (e.statusCode == 404) {
+                // 远端已无此文件（别处删除后本地缓存也丢）：清记录，避免空白误保存复活空壳
+                files.remove(relPath)
+                cache.writeState(CacheState.dump(files, state.lastSync))
+            }
+            return null
+        } catch (_: Exception) {
+            return null   // 网络问题：保留记录，下次打开再试恢复
+        }
     }
 }
