@@ -1,0 +1,4 @@
+{
+  "admins": [{"username":"admin","password":"adminprobe123","status":1}],
+  "users": [{"username":"probe","password":"probepass123","home_dir":"/srv/probe","status":1,"permissions":{"/":["*"]}}]
+}

@@ -1,0 +1,31 @@
+# 本地联调用 compose（M0 实测通过的参数固化）
+# 用法: cd server && docker compose up -d
+#      联调: ./probe.sh   (BASE/AUTH 默认值即本配置)
+# VPS 生产部署版（含 Caddy TLS + Filebrowser）见 app-design.md §6.2
+#
+# 端口只绑 127.0.0.1：联调数据不出本机。
+# 数据落位:
+#   ./sftpgo-data  SFTPGo 元数据库（用户/配额）
+#   ./probe-files  WebDAV 用户 home（diary/ notes/ attachments/ 都在这）
+#   ./loaddata.json 启动时导入的用户（probe/probepass123，仅联调）
+
+services:
+  sftpgo:
+    image: drakkan/sftpgo:latest   # 实测版本 2.7.6
+    container_name: sftpgo-probe
+    environment:
+      # 坑1: 镜像默认不起 WebDAV，必须显式指定端口
+      - SFTPGO_WEBDAVD__BINDINGS__0__PORT=8090
+      # 坑2: 默认 admin 环境变量不生效，从 JSON 导入用户
+      - SFTPGO_LOADDATA_FROM=/etc/sftpgo/loaddata.json
+    ports:
+      # 真机验收：手机经 Tailscale (100.64.0.2) 或局域网 (192.168.1.122) 直连 WebDAV
+      # 不绑死 Tailscale IP：tailscale0 接口晚于 docker 启动会导致绑定失败
+      # NAT 内网环境无公网暴露，Basic auth 保护
+      - "18080:8080"   # web 管理界面 + REST API
+      - "18090:8090"   # WebDAV（App/probe.sh 打这里）
+    volumes:
+      - ./sftpgo-data:/var/lib/sftpgo
+      - ./probe-files:/srv/probe
+      - ./loaddata.json:/etc/sftpgo/loaddata.json:ro
+    restart: unless-stopped

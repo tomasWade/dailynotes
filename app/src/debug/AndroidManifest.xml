@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 仅 debug 构建：允许明文 HTTP（联调连 http://局域网/Tailscale IP 的 SFTPGo）。
+     release 不叠加此文件，正式版必须走 https。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:usesCleartextTraffic="true" />
+</manifest>
