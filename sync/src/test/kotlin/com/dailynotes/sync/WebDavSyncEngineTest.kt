@@ -21,6 +21,27 @@ class WebDavSyncEngineTest {
     }
 
     @Test
+    fun `put 自动创建多级父目录（附件月桶场景）`() = runBlocking {
+        // 不预先 mkdir，直接 PUT 深层路径——真机 409 的回归用例
+        val etag = engine.put("t-attach-bucket/2026-10/img_001.jpg", "fake-image-bytes".toByteArray())
+        assertTrue(etag.isNotBlank(), "etag 应非空")
+
+        val (bytes, _) = engine.get("t-attach-bucket/2026-10/img_001.jpg")
+        assertEquals("fake-image-bytes", bytes.toString(Charsets.UTF_8))
+        engine.delete("t-attach-bucket/2026-10/img_001.jpg")
+    }
+
+    @Test
+    fun `put 顶层文件无目录前缀不建同名目录`() = runBlocking {
+        // substringBeforeLast 防御：无 '/' 时不得把文件名当目录 MKCOL（否则 PUT 409）
+        val etag = engine.put("t-toplevel-file.md", "top".toByteArray())
+        assertTrue(etag.isNotBlank())
+        val (bytes, _) = engine.get("t-toplevel-file.md")
+        assertEquals("top", bytes.toString(Charsets.UTF_8))
+        engine.delete("t-toplevel-file.md")
+    }
+
+    @Test
     fun `put get list roundtrip`() = runBlocking {
         engine.mkdir("t-diary")
         val body = "# 测试日记内容 🎉".toByteArray()

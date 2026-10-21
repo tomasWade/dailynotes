@@ -109,4 +109,22 @@ class DiaryParserTest {
         assertEquals(0, DiaryParser.streak(emptySet()))
         assertEquals(0, DiaryParser.streak(setOf(LocalDate.now().minusDays(3))))
     }
+
+    @Test
+    fun `附件引用提取与归一`() {
+        val text = """
+            ![](../attachments/2026-10/a.jpg)
+            见 [文档](https://x.y/z)
+            ![](attachments/2026-10/b.png)
+            再提一次 ![重复](../attachments/2026-10/a.jpg)
+        """.trimIndent()
+        val refs = DiaryParser.attachmentRefs(text)
+        assertEquals(listOf("attachments/2026-10/a.jpg", "attachments/2026-10/b.png"), refs)
+    }
+
+    @Test
+    fun `附件引用空文本与无附件`() {
+        assertEquals(emptyList<String>(), DiaryParser.attachmentRefs(""))
+        assertEquals(emptyList<String>(), DiaryParser.attachmentRefs("纯文字 [外链](https://a.b)"))
+    }
 }

@@ -97,6 +97,9 @@ class WebDavSyncEngine(
     }
 
     override suspend fun put(path: String, data: ByteArray): Etag {
+        // WebDAV 要求父目录已存在（SFTPGo 否则 409）——附件月桶等深层路径首次上传时必然踩中。
+        // 无 '/' 时返回 ""（避免把整个 path 当目录 MKCOL 出同名目录导致后续 PUT 409）
+        mkdir(path.substringBeforeLast('/', ""))
         val headerEtag = io {
             request("PUT", path, data.toRequestBody(null)).use { resp ->
                 if (!ok(resp.code, 200, 201, 204)) throw SyncException("PUT $path -> ${resp.code}", resp.code)

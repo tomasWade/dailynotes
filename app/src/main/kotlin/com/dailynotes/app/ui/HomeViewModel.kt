@@ -16,6 +16,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     data class UiState(
         val loading: Boolean = false,
         val entries: List<DiaryEntry> = emptyList(),
+        val dateSet: Set<java.time.LocalDate> = emptySet(),
         val error: String? = null,
         val info: String? = null,
     )
@@ -67,7 +68,11 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                     val content = syncer.cache.read("diary/$name")?.toString(Charsets.UTF_8) ?: ""
                     DiaryParser.parse(name, content)
                 }
-            _state.value = _state.value.copy(entries = entries, loading = false)
+            _state.value = _state.value.copy(
+                entries = entries,
+                dateSet = entries.map { it.date }.toSet(),
+                loading = false,
+            )
         }
     }
 }

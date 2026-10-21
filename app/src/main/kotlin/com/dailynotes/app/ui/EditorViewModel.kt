@@ -5,7 +5,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.dailynotes.app.data.CacheSyncer
+import com.dailynotes.app.data.SafCache
 import com.dailynotes.app.data.SettingsStore
+import com.dailynotes.app.diary.DiaryParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +31,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
 
+    /** 本次编辑会话插入的附件（根相对路径）。保存成功即清空；退出时未引用的删缓存防孤儿 */
+    private val pendingAttachments = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
     fun load(relPath: String) {
         if (_state.value.relPath == relPath) return
         _state.value = UiState(relPath = relPath, loading = true)
@@ -46,9 +51,35 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 退出编辑器时调用：清空状态，使下次进入同一文件会重新 load（拿到最新缓存/远端内容）。
      * 旋转屏幕不走此路径（onBack 才调），未保存文本在旋转后仍保留。
+     * 同时清掉本次会话插入但最终正文未引用的孤儿附件（仅在本地缓存，删之安全）。
      */
     fun discard() {
+        cleanupOrphanAttachments(_state.value.text)
         _state.value = UiState()
+    }
+
+    private fun cleanupOrphanAttachments(finalText: String) {
+        if (pendingAttachments.isEmpty()) return
+        val treeUri = store.treeUri()
+        if (treeUri.isBlank()) {
+            pendingAttachments.clear()
+            return
+        }
+        val referenced = DiaryParser.attachmentRefs(finalText).toSet()
+        val toDelete = pendingAttachments.filter { it !in referenced }
+        if (toDelete.isNotEmpty()) {
+            runCatching {
+                val cache = SafCache(getApplication(), treeUri)
+                toDelete.forEach { cache.delete(it) }
+            }
+        }
+        pendingAttachments.clear()
+    }
+
+    override fun onCleared() {
+        // Activity 被杀时同样清理（同步删少量文件，毫秒级）
+        cleanupOrphanAttachments(_state.value.text)
+        super.onCleared()
     }
 
     fun updateText(t: String) {
@@ -82,6 +113,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     val rand = List(4) { "0123456789abcdef".random() }.joinToString("")
                     val rel = "attachments/$bucket/${stamp}_$rand.$ext"
                     syncer.cache.write(rel, bytes)
+                    pendingAttachments.add(rel)
                     rel
                 }
                 _state.value = _state.value.copy(text = _state.value.text + "\n\n![](../$rootRel)")
@@ -104,6 +136,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val syncer = CacheSyncer(getApplication(), store)
                 val pushed = syncer.push(relPath, text.toByteArray(Charsets.UTF_8), text)
+                // 成功（含仅本地模式）：正文已入库、引用成立，不再是孤儿候选
+                pendingAttachments.clear()
                 _state.value = if (pushed) {
                     _state.value.copy(saving = false, savedOk = true)
                 } else {

@@ -90,6 +90,14 @@ object DiaryParser {
         return sb.toString() to truncated
     }
 
+    /** 正文里引用的附件（根相对路径，去重）；非 attachments 的链接忽略 */
+    fun attachmentRefs(text: String): List<String> =
+        Regex("""\]\(([^)]*attachments/[^)\s]+)\)""")
+            .findAll(text)
+            .map { toRootRelative(it.groupValues[1]) }
+            .distinct()
+            .toList()
+
     /** 连续写作天数：今天没写则从昨天起算（都断了返回 0） */
     fun streak(dates: Set<LocalDate>): Int {
         var d = LocalDate.now()

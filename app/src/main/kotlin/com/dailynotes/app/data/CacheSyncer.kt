@@ -61,7 +61,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         val state = CacheState.parse(cache.readState())
         val files = state.files.toMutableMap()
 
-        for (ref in attachmentRefs(text)) {
+        for (ref in DiaryParser.attachmentRefs(text)) {
             if (files[ref] == null) {
                 cache.read(ref)?.let { ab -> files[ref] = c.push(ref, ab) }
             }
@@ -81,11 +81,4 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         files.remove(relPath)
         cache.writeState(CacheState.dump(files, state.lastSync))
     }
-
-    private fun attachmentRefs(text: String): List<String> =
-        Regex("""\]\(([^)]*attachments/[^)\s]+)\)""")
-            .findAll(text)
-            .map { DiaryParser.toRootRelative(it.groupValues[1]) }
-            .distinct()
-            .toList()
 }

@@ -1,5 +1,7 @@
 package com.dailynotes.app.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,11 +30,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dailynotes.app.diary.DiaryEntry
 import com.dailynotes.app.diary.DiaryParser
 import java.time.LocalDate
+import java.time.YearMonth
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     var editing by rememberSaveable { mutableStateOf<String?>(null) }   // 完整 relPath
+    var calendarMode by rememberSaveable { mutableStateOf(false) }
+    var calMonthText by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
+    val calMonth = rememberSaveable(calMonthText) { YearMonth.parse(calMonthText) }
 
     val relPath = editing
     if (relPath != null) {
@@ -58,8 +66,13 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("日记", style = MaterialTheme.typography.titleLarge)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (state.loading) CircularProgressIndicator(Modifier.padding(2.dp))
+                TextButton(
+                    onClick = { calendarMode = !calendarMode },
+                ) {
+                    Text(if (calendarMode) "列表" else "日历")
+                }
                 Button(onClick = { editing = "diary/" + DiaryParser.fileNameOf(LocalDate.now()) }, enabled = !state.loading) {
                     Text("今天")
                 }
@@ -74,18 +87,41 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
 
-        if (state.entries.isEmpty() && !state.loading) {
-            Text(
-                "还没有日记。点「今天」写下第一篇。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.padding(top = 32.dp),
+        if (calendarMode) {
+            CalendarPanel(
+                month = calMonth,
+                onMonthChange = { calMonthText = it.toString() },
+                dates = state.dateSet,
+                onPick = { date -> editing = "diary/" + DiaryParser.fileNameOf(date) },
             )
-        }
+        } else {
+            if (state.entries.isEmpty() && !state.loading) {
+                Text(
+                    "还没有日记。点「今天」写下第一篇，或切到「日历」补记任意一天。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(top = 32.dp),
+                )
+            }
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.entries, key = { it.fileName }) { entry ->
-                DiaryCard(entry) { editing = "diary/" + entry.fileName }
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val grouped = state.entries.groupBy { "${it.date.year}年${it.date.monthValue}月" }
+                grouped.forEach { (month, list) ->
+                    stickyHeader(key = "h-$month") {
+                        Text(
+                            month,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surface)
+                                .padding(vertical = 4.dp),
+                        )
+                    }
+                    items(list, key = { it.fileName }) { entry ->
+                        DiaryCard(entry) { editing = "diary/" + entry.fileName }
+                    }
+                }
             }
         }
     }

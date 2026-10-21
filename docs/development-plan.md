@@ -82,6 +82,14 @@
 - **R3 终审**：streak 无测试 → 补 3 条；discard 首版调错 VM 对象（编译器抓出）→ 修为编辑器分支显式取同实例
 - **遗留（真机验收清单）**：嵌套 Scaffold 的 FAB 偏移视觉问题；SAF 真机读写行为；PickVisualMedia 相册选图；Coil 加载 content uri；编辑器/列表导航手感
 
+### 附件链路三轮深审（2026-10-21 v0.1.2，真机 409 修复引发）
+真机首验战果：插图保存报 409 —— `PUT attachments/月桶/` 时父目录不存在（SFTPGo 要求），pull 只建了顶层三目录。
+- **修复**：`WebDavSyncEngine.put` 前自动逐级 mkdir 父目录（engine 层一处修，所有推路径受益）；回归测试「多级路径直 PUT」「顶层无前缀路径不建同名目录」（`substringBeforeLast('/', "")` 防御：miss 时原实现返回整个路径会 MKCOL 出同名目录）。
+- **R1 数据流**：[高] 上述 409；[中] 孤儿附件（插图后不保存退出 → 图片永留缓存）→ 修：`EditorViewModel.pendingAttachments` 会话级追踪，保存成功清空，discard/onCleared 删除未被最终正文引用的缓存附件（未保存 → 远端必无 → 删缓存安全）。
+- **R2 修复副作用**：每次 PUT 多 1-2 个幂等 MKCOL，接受。
+- **R3 一致性（记录不修）**：附件推成功+md 推失败 → 重试幂等重推（无害）；删笔记不删附件（v1 设计留观，兼"当网盘"）；LWW 败者插图成孤儿（已知语义）；正则不吃含空格文件名（自生成名无空格）。
+- 同批 UI：主页「列表⇄日历」切换（月历实心=有日记、今天描边、**点空白日期=补记任意一天**）+ 信息流粘性月头部。
+
 ### 真机联调步骤（最后阶段执行）
 ```bash
 adb install app/build/outputs/apk/debug/app-debug.apk
