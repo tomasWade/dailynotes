@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,11 +61,13 @@ fun EditorScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit,
     viewModel: EditorViewModel = viewModel(),
+    onDelete: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsState()
     var previewMode by rememberSaveable { mutableStateOf(false) }
     var modeDecided by rememberSaveable { mutableStateOf(false) }
     var viewImage by rememberSaveable { mutableStateOf<String?>(null) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(relPath) {
         modeDecided = false
@@ -98,6 +101,11 @@ fun EditorScreen(
                 actions = {
                     TextButton(onClick = { previewMode = !previewMode }) {
                         Text(if (previewMode) "编辑" else "预览")
+                    }
+                    if (onDelete != null) {
+                        IconButton(onClick = { confirmDelete = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "删除")
+                        }
                     }
                     if (!previewMode) {
                         IconButton(
@@ -211,6 +219,24 @@ fun EditorScreen(
                 }
             }
         }
+    }
+
+    // 删除确认
+    if (confirmDelete && onDelete != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("删除？") },
+            text = { Text("删除后同时移除服务器与本地缓存，无法撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    onDelete()
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
+            },
+        )
     }
 
     // 全屏看图

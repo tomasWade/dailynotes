@@ -45,6 +45,7 @@ fun NotesScreen(viewModel: NotesViewModel = viewModel()) {
     val relPath = editing
     if (relPath != null) {
         val editorVm: EditorViewModel = viewModel()
+        val fileName = relPath.removePrefix("notes/")
         EditorScreen(
             relPath = relPath,
             title = "笔记",
@@ -54,6 +55,11 @@ fun NotesScreen(viewModel: NotesViewModel = viewModel()) {
             },
             onSaved = viewModel::loadEntries,
             viewModel = editorVm,
+            onDelete = {
+                editorVm.discard()   // 先清本次会话未保存的孤儿附件
+                editing = null
+                viewModel.deleteEntry(fileName)
+            },
         )
         return
     }
