@@ -4,6 +4,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,6 +16,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -24,16 +32,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.dailynotes.app.diary.DiaryParser
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,6 +63,8 @@ fun EditorScreen(
 ) {
     LaunchedEffect(relPath) { viewModel.load(relPath) }
     val state by viewModel.state.collectAsState()
+    var previewMode by rememberSaveable { mutableStateOf(false) }
+    var viewImage by rememberSaveable { mutableStateOf<String?>(null) }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let(viewModel::insertImage)
@@ -63,27 +82,32 @@ fun EditorScreen(
                     }
                 },
                 actions = {
-                    IconButton(
-                        onClick = {
-                            pickImage.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        },
-                        enabled = !state.loading,
-                    ) {
-                        Icon(Icons.Filled.Add, contentDescription = "插入图片")
+                    TextButton(onClick = { previewMode = !previewMode }) {
+                        Text(if (previewMode) "编辑" else "预览")
                     }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = { viewModel.save(onSaved) },
-                        enabled = !state.loading && !state.saving,
-                        modifier = Modifier.padding(end = 8.dp),
-                    ) {
-                        if (state.saving) {
-                            CircularProgressIndicator(Modifier.height(18.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(6.dp))
+                    if (!previewMode) {
+                        IconButton(
+                            onClick = {
+                                pickImage.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            enabled = !state.loading,
+                        ) {
+                            Icon(Icons.Filled.Add, contentDescription = "插入图片")
                         }
-                        Text("保存")
+                        Spacer(Modifier.width(4.dp))
+                        Button(
+                            onClick = { viewModel.save(onSaved) },
+                            enabled = !state.loading && !state.saving,
+                            modifier = Modifier.padding(end = 8.dp),
+                        ) {
+                            if (state.saving) {
+                                CircularProgressIndicator(Modifier.height(18.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text("保存")
+                        }
                     }
                 },
             )
@@ -98,15 +122,60 @@ fun EditorScreen(
             if (state.loading) {
                 Text("加载中…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(4.dp))
             }
-            OutlinedTextField(
-                value = state.text,
-                onValueChange = viewModel::updateText,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                placeholder = { Text("写点什么…") },
-                textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
-            )
+
+            if (previewMode) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(vertical = 8.dp),
+                ) {
+                    if (state.text.isBlank()) {
+                        Text(
+                            "（空白）",
+                            color = MaterialTheme.colorScheme.outline,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                    } else {
+                        MarkdownPreview(state.text)
+                    }
+                }
+            } else {
+                OutlinedTextField(
+                    value = state.text,
+                    onValueChange = viewModel::updateText,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    placeholder = { Text("写点什么…") },
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                )
+
+                // 当前正文引用的图片缩略条：点开全屏看大图
+                val refs = DiaryParser.attachmentRefs(state.text)
+                if (refs.isNotEmpty()) {
+                    LazyRow(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        items(refs.size) { i ->
+                            AttachmentImage(
+                                imagePath = refs[i],
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .height(72.dp)
+                                    .width(72.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { viewImage = refs[i] },
+                            )
+                        }
+                    }
+                }
+            }
+
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -126,6 +195,25 @@ fun EditorScreen(
                         color = MaterialTheme.colorScheme.outline,
                     )
                 }
+            }
+        }
+    }
+
+    // 全屏看图
+    viewImage?.let { ref ->
+        Dialog(onDismissRequest = { viewImage = null }) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { viewImage = null },
+                contentAlignment = Alignment.Center,
+            ) {
+                AttachmentImage(
+                    imagePath = ref,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
     }

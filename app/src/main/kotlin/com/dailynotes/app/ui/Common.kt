@@ -14,9 +14,13 @@ import coil.compose.AsyncImage
 import com.dailynotes.app.data.SafCache
 import com.dailynotes.app.data.SettingsStore
 
-/** 卡片首图：SAF 树解析出 content uri 喂给 Coil */
+/** 附件图片加载：SAF 树解析 content uri 喂给 Coil */
 @Composable
-fun EntryThumb(imagePath: String) {
+fun AttachmentImage(
+    imagePath: String,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+) {
     val context = LocalContext.current
     val uri = remember(imagePath) {
         runCatching {
@@ -29,11 +33,21 @@ fun EntryThumb(imagePath: String) {
         AsyncImage(
             model = it,
             contentDescription = "配图",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(140.dp)
-                .clip(RoundedCornerShape(8.dp)),
+            contentScale = contentScale,
+            modifier = modifier,
         )
     }
+}
+
+/** 卡片首图（固定高度裁切） */
+@Composable
+fun EntryThumb(imagePath: String) {
+    AttachmentImage(
+        imagePath = imagePath,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(140.dp)
+            .clip(RoundedCornerShape(8.dp)),
+    )
 }
