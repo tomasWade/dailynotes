@@ -37,17 +37,24 @@ import java.time.YearMonth
 fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     var editing by rememberSaveable { mutableStateOf<String?>(null) }   // 完整 relPath
+    var reading by rememberSaveable { mutableStateOf<Int?>(null) }      // 阅读 pager 页码
     var calendarMode by rememberSaveable { mutableStateOf(false) }
     var calMonthText by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
     val calMonth = rememberSaveable(calMonthText) { YearMonth.parse(calMonthText) }
 
-    val relPath = editing
-    if (relPath != null) {
+    fun openDate(date: LocalDate) {
+        val idx = state.entries.indexOfFirst { it.date == date }
+        if (idx >= 0) reading = idx else editing = "diary/" + DiaryParser.fileNameOf(date)
+    }
+
+    // 编辑器优先（从 pager 进入编辑，返回时回 pager）
+    val editPath = editing
+    if (editPath != null) {
         val editorVm: EditorViewModel = viewModel()
-        val date = relPath.removePrefix("diary/").removeSuffix(".md")
-        val title = DiaryParser.parseDate("$date.md")?.let { DiaryParser.dateLabel(it) } ?: relPath
+        val date = editPath.removePrefix("diary/").removeSuffix(".md")
+        val title = DiaryParser.parseDate("$date.md")?.let { DiaryParser.dateLabel(it) } ?: editPath
         EditorScreen(
-            relPath = relPath,
+            relPath = editPath,
             title = "日记 · $title",
             onBack = {
                 editorVm.discard()
@@ -55,6 +62,18 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             },
             onSaved = viewModel::loadEntries,
             viewModel = editorVm,
+        )
+        return
+    }
+
+    val readPage = reading
+    if (readPage != null && state.entries.isNotEmpty()) {
+        DiaryPagerScreen(
+            entries = state.entries,
+            initialPage = readPage,
+            dataVersion = state.entriesVersion,
+            onEdit = { editing = it },
+            onBack = { reading = null },
         )
         return
     }
@@ -73,7 +92,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 ) {
                     Text(if (calendarMode) "列表" else "日历")
                 }
-                Button(onClick = { editing = "diary/" + DiaryParser.fileNameOf(LocalDate.now()) }, enabled = !state.loading) {
+                Button(onClick = { openDate(LocalDate.now()) }, enabled = !state.loading) {
                     Text("今天")
                 }
                 Button(onClick = viewModel::refresh, enabled = !state.loading) {
@@ -92,7 +111,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 month = calMonth,
                 onMonthChange = { calMonthText = it.toString() },
                 dates = state.dateSet,
-                onPick = { date -> editing = "diary/" + DiaryParser.fileNameOf(date) },
+                onPick = ::openDate,
             )
         } else {
             if (state.entries.isEmpty() && !state.loading) {
@@ -119,7 +138,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                         )
                     }
                     items(list, key = { it.fileName }) { entry ->
-                        DiaryCard(entry) { editing = "diary/" + entry.fileName }
+                        DiaryCard(entry) {
+                            state.entries.indexOfFirst { it.fileName == entry.fileName }
+                                .takeIf { it >= 0 }?.let { reading = it }
+                        }
                     }
                 }
             }

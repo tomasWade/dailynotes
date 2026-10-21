@@ -42,6 +42,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         for (d in result.deleted) {
             cache.delete(d)
             files.remove(d)
+            if (d.startsWith("attachments/")) AttachmentUriCache.remove(d)
         }
         val now = System.currentTimeMillis()
         cache.writeState(CacheState.dump(files, now))

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -16,6 +17,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -26,6 +30,12 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun MeScreen(viewModel: MeViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
+    var showCleanup by rememberSaveable { mutableStateOf(false) }
+
+    if (showCleanup) {
+        CleanupScreen(viewModel = viewModel, onBack = { showCleanup = false })
+        return
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
@@ -64,7 +74,7 @@ fun MeScreen(viewModel: MeViewModel = viewModel()) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {
                             exportLauncher.launch(
@@ -79,6 +89,9 @@ fun MeScreen(viewModel: MeViewModel = viewModel()) {
                         } else {
                             Text("导出全部数据 (zip)")
                         }
+                    }
+                    OutlinedButton(onClick = { showCleanup = true }, enabled = !state.loading) {
+                        Text("附件清理")
                     }
                 }
             }

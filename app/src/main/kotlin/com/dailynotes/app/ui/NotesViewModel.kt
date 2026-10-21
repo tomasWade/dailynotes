@@ -34,14 +34,16 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            val syncer = CacheSyncer(getApplication(), store)
-            val entries = syncer.cache.list("notes")
-                .filter { NoteParser.isNote(it) }
-                .sortedDescending()
-                .mapNotNull { name ->
-                    val content = syncer.cache.read("notes/$name")?.toString(Charsets.UTF_8) ?: ""
-                    NoteParser.parse(name, content)
-                }
+            val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val syncer = CacheSyncer(getApplication(), store)
+                syncer.cache.list("notes")
+                    .filter { NoteParser.isNote(it) }
+                    .sortedDescending()
+                    .mapNotNull { name ->
+                        val content = syncer.cache.read("notes/$name")?.toString(Charsets.UTF_8) ?: ""
+                        NoteParser.parse(name, content)
+                    }
+            }
             _state.value = _state.value.copy(entries = entries, loading = false)
         }
     }

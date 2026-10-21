@@ -69,6 +69,23 @@ class SafCache(context: Context, treeUriString: String) {
         return out
     }
 
+    /** 递归列出目录下全部文件的 path→Uri 映射。
+     *  一次 IPC 拿整棵子树，替代逐文件 findFile（后者每次都列目录，列表滑动卡顿根因） */
+    fun urisUnder(dir: String): Map<String, Uri> {
+        val base = walkTo(dir) ?: return emptyMap()
+        val out = mutableMapOf<String, Uri>()
+        val prefix = dir.trim('/') + "/"
+        fun walk(d: DocumentFile, p: String) {
+            for (f in d.listFiles()) {
+                val name = f.name ?: continue
+                if (f.isDirectory) walk(f, "$p$name/")
+                else if (f.isFile) out["$p$name"] = f.uri
+            }
+        }
+        walk(base, prefix)
+        return out
+    }
+
     private fun walkTo(dir: String): DocumentFile? {
         var cur: DocumentFile = root
         for (seg in dir.trim('/').split("/").filter { it.isNotBlank() }) {

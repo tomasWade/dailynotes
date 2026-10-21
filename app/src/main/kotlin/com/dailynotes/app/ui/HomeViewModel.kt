@@ -19,6 +19,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         val dateSet: Set<java.time.LocalDate> = emptySet(),
         val error: String? = null,
         val info: String? = null,
+        val entriesVersion: Long = 0,   // 列表每次重建 +1，阅读 pager 据此刷新当前页
     )
 
     private val store = SettingsStore(app)
@@ -43,7 +44,10 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(loading = true, error = null)
         viewModelScope.launch {
             try {
-                val s = syncer.pull()
+                // 网络部分内部已 IO；SAF 写缓存也在此离开主线程
+                val s = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    syncer.pull()
+                }
                 loadEntries()
                 _state.value = _state.value.copy(
                     loading = false,
@@ -56,22 +60,27 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 从缓存 diary/ 目录构建日记流（文件名即日期，倒序） */
+    /** 从缓存 diary/ 目录构建日记流（文件名即日期，倒序）；顺带批量预解析附件 uri（滑动零 IPC） */
     fun loadEntries() {
         if (store.treeUri().isBlank()) return
         viewModelScope.launch {
-            val syncer = CacheSyncer(getApplication(), store)
-            val entries = syncer.cache.list("diary")
-                .filter { DiaryParser.isDiary(it) }
-                .sortedDescending()
-                .mapNotNull { name ->
-                    val content = syncer.cache.read("diary/$name")?.toString(Charsets.UTF_8) ?: ""
-                    DiaryParser.parse(name, content)
-                }
+            val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val syncer = CacheSyncer(getApplication(), store)
+                val list = syncer.cache.list("diary")
+                    .filter { DiaryParser.isDiary(it) }
+                    .sortedDescending()
+                    .mapNotNull { name ->
+                        val content = syncer.cache.read("diary/$name")?.toString(Charsets.UTF_8) ?: ""
+                        DiaryParser.parse(name, content)
+                    }
+                com.dailynotes.app.data.AttachmentUriCache.putAll(syncer.cache.urisUnder("attachments"))
+                list
+            }
             _state.value = _state.value.copy(
                 entries = entries,
                 dateSet = entries.map { it.date }.toSet(),
                 loading = false,
+                entriesVersion = _state.value.entriesVersion + 1,
             )
         }
     }

@@ -4,7 +4,10 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.dailynotes.app.data.AttachmentUriCache
 import com.dailynotes.app.data.CacheState
+import com.dailynotes.app.data.CacheSyncer
+import com.dailynotes.app.data.SafCache
 import com.dailynotes.app.data.SettingsStore
 import com.dailynotes.app.diary.DiaryParser
 import kotlinx.coroutines.Dispatchers
@@ -12,7 +15,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -32,6 +37,10 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
         val stats: Stats = Stats(),
         val error: String? = null,
         val info: String? = null,
+        // 附件回收站
+        val scanning: Boolean = false,
+        val orphans: List<String> = emptyList(),
+        val cleanupInfo: String? = null,
     )
 
     private val store = SettingsStore(app)
@@ -48,21 +57,90 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            val cache = com.dailynotes.app.data.SafCache(getApplication(), store.treeUri())
-            val state = CacheState.parse(cache.readState())
+            val (diaries, noteCount, state) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                val cache = SafCache(getApplication(), store.treeUri())
+                Triple(
+                    cache.list("diary").filter { DiaryParser.isDiary(it) },
+                    cache.list("notes").count { com.dailynotes.app.note.NoteParser.isNote(it) },
+                    CacheState.parse(cache.readState()),
+                )
+            }
             // 事实以缓存目录为准（B 档全量缓存），cache-state 兜底附件计数
-            val diaries = cache.list("diary").filter { DiaryParser.isDiary(it) }
             val dates = diaries.mapNotNull { DiaryParser.parseDate(it) }.toSet()
             val attachments = state.files.keys.count { it.startsWith("attachments/") }
-            _state.value = UiState(
+            _state.value = _state.value.copy(
                 stats = Stats(
                     diaryCount = diaries.size,
                     streakDays = DiaryParser.streak(dates),
-                    noteCount = cache.list("notes").count { com.dailynotes.app.note.NoteParser.isNote(it) },
+                    noteCount = noteCount,
                     attachmentCount = attachments,
                     lastSync = state.lastSync,
                 ),
             )
+        }
+    }
+
+    /** 附件回收站：扫描全部 md 引用，找出零引用的缓存附件 */
+    fun scanOrphans() {
+        if (store.treeUri().isBlank()) {
+            _state.value = _state.value.copy(cleanupInfo = "请先到「设置」选择缓存文件夹")
+            return
+        }
+        _state.value = _state.value.copy(scanning = true, cleanupInfo = null)
+        viewModelScope.launch {
+            try {
+                val orphans = scanOrphansInternal()
+                _state.value = _state.value.copy(scanning = false, orphans = orphans)
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(scanning = false, cleanupInfo = "扫描失败：${e.message}")
+            }
+        }
+    }
+
+    private suspend fun scanOrphansInternal(): List<String> = withContext(Dispatchers.IO) {
+        val cache = SafCache(getApplication(), store.treeUri())
+        val referenced = mutableSetOf<String>()
+        for (dir in listOf("diary", "notes")) {
+            for (name in cache.list(dir)) {
+                val text = cache.read("$dir/$name")?.toString(Charsets.UTF_8) ?: continue
+                referenced += DiaryParser.attachmentRefs(text)
+            }
+        }
+        cache.listRecursive("attachments").filter { it !in referenced }
+    }
+
+    /** 删除所选孤儿附件：远端删 + 缓存删 + state 移除 + uri 缓存失效；单文件失败不影响其余 */
+    fun deleteOrphans(paths: List<String>) {
+        if (paths.isEmpty()) return
+        if (store.treeUri().isBlank()) return
+        val syncer = CacheSyncer(getApplication(), store)
+        if (!syncer.serverConfigured()) {
+            _state.value = _state.value.copy(
+                scanning = false,
+                cleanupInfo = "未配置服务器：清理需同时删除远端，请先在「设置」配置",
+            )
+            return
+        }
+        _state.value = _state.value.copy(scanning = true, cleanupInfo = null)
+        viewModelScope.launch {
+            var ok = 0
+            var failed = 0
+            for (p in paths) {
+                try {
+                    syncer.delete(p)
+                    AttachmentUriCache.remove(p)
+                    ok++
+                } catch (_: Exception) {
+                    failed++
+                }
+            }
+            val rescan = runCatching { scanOrphansInternal() }.getOrDefault(emptyList())
+            _state.value = _state.value.copy(
+                scanning = false,
+                orphans = rescan,
+                cleanupInfo = "已删除 $ok 个" + if (failed > 0) "，失败 $failed 个（网络问题）" else "",
+            )
+            loadStats()
         }
     }
 
@@ -75,7 +153,7 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(loading = true, error = null, info = null)
         viewModelScope.launch {
             try {
-                val cache = com.dailynotes.app.data.SafCache(getApplication(), store.treeUri())
+                val cache = SafCache(getApplication(), store.treeUri())
                 val count = withContext(Dispatchers.IO) {
                     val resolver = getApplication<Application>().contentResolver
                     var n = 0
@@ -110,7 +188,7 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
         val ts = _state.value.stats.lastSync
         if (ts <= 0) return "从未"
         return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").format(
-            java.time.Instant.ofEpochMilli(ts).atZone(java.time.ZoneId.systemDefault())
+            Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault())
         )
     }
 }

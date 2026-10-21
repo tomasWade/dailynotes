@@ -4,6 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
+        android:name=".DailyNotesApp"
         android:label="DailyNotes"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:supportsRtl="true">
