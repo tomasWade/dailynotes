@@ -5,9 +5,10 @@ import com.dailynotes.app.diary.DiaryParser
 import com.dailynotes.sync.SyncCoordinator
 import com.dailynotes.sync.WebDavSyncEngine
 
-/** 应用层乐观锁冲突：远端 etag 与本地记录不一致（别处已更新），保存被拒绝 */
-class SyncConflictException(val relPath: String) :
-    Exception("远端已有更新版本：$relPath")
+/** 应用层乐观锁冲突：远端 etag 与本地记录不一致（别处更新/已删除），保存被拒绝。
+ *  conflicted 文本已同步留副本到 <relPath>.conflict-local-<时间戳>.md（仅本地缓存，防 pull 覆盖丢输入） */
+class SyncConflictException(val relPath: String, val remoteDeleted: Boolean = false) :
+    Exception("远端已有变更：$relPath")
 
 /**
  * B 档同步门面：SAF 缓存 + cache-state 对账 + WebDAV 推拉删，三端（主页/笔记/编辑器）共用。
@@ -70,12 +71,21 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         val state = CacheState.parse(cache.readState())
         val files = state.files.toMutableMap()
 
-        // 乐观锁检查（已同步过的文件才查；新文件跳过）
+        // 乐观锁检查（已同步过的文件才查；新文件跳过）。
+        // remote != known 含两种情况：etag 不同（别处更新过）/ 空（远端已被别处删除）——都拒绝覆盖。
+        // etagOf 对服务器错误 fail-closed 抛异常（不会静默降级 LWW）。
         val knownEtag = files[relPath]
         if (knownEtag != null) {
             val remote = c.engineEtag(relPath)
-            if (remote.isNotBlank() && remote != knownEtag) {
-                throw SyncConflictException(relPath)
+            if (remote != knownEtag) {
+                // 用户输入留副本（仅本地缓存）：否则提示"去同步"后 pull 会覆盖缓存+discard 清编辑器，输入三处全丢
+                val stamp = java.time.LocalDateTime.now()
+                    .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss"))
+                val ext = relPath.substringAfterLast('.', "md")
+                val stem = relPath.removeSuffix(".$ext")
+                val copyPath = "$stem.conflict-local-$stamp.$ext"
+                runCatching { cache.write(copyPath, bytes) }
+                throw SyncConflictException(relPath, remote.isBlank())
             }
         }
 

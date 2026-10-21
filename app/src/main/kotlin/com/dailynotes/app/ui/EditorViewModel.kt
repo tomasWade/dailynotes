@@ -44,12 +44,21 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val syncer = CacheSyncer(getApplication(), store)
+            var readFailed = false
             val text: String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    val fromCache = syncer.cache.read(relPath)?.toString(Charsets.UTF_8)
-                    // 缓存文件缺失但 state 显示远端有 → 拉回，防空白误保存覆盖远端
-                    fromCache ?: syncer.recover(relPath)?.toString(Charsets.UTF_8)
-                }.getOrNull()
+                // read 失败不应连带跳过 recover（否则静默空白 → 误保存覆盖远端），各自独立捕获
+                val fromCache = runCatching { syncer.cache.read(relPath)?.toString(Charsets.UTF_8) }
+                    .onFailure { readFailed = true }
+                    .getOrNull()
+                fromCache ?: runCatching { syncer.recover(relPath)?.toString(Charsets.UTF_8) }.getOrNull()
+            }
+            if (readFailed && text == null) {
+                // 读取且恢复都失败：绝不静默给空白编辑器（会被误存成空内容覆盖远端）
+                _state.value = UiState(
+                    relPath,
+                    error = "读取失败（缓存与服务器都未取到内容）。为防误覆盖，请勿保存，先检查存储权限或同步。",
+                )
+                return@launch
             }
             _state.value = UiState(
                 relPath = relPath,
@@ -156,9 +165,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onSaved()
             } catch (e: com.dailynotes.app.data.SyncConflictException) {
+                val reason = if (e.remoteDeleted) "远端此文件已被删除" else "远端已有更新版本"
                 _state.value = _state.value.copy(
                     saving = false,
-                    error = "远端已有更新版本，本次保存未覆盖。请返回后点「同步」拉取新内容，再继续编辑。",
+                    error = "$reason，本次保存未覆盖。你的内容已留副本（缓存目录下 *.conflict-local-*.md）；" +
+                        "如需继续编辑请先复制文本，再返回点「同步」。",
                 )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(

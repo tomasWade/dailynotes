@@ -118,9 +118,15 @@ class WebDavSyncEngine(
     private suspend fun fetchEtag(path: String): Etag = io {
         val resp = request("PROPFIND", path, headers = mapOf("Depth" to "0"))
         resp.use {
-            if (it.code != 207) return@use ""
-            val xml = it.body?.bytes() ?: return@use ""
-            parseMultistatus(xml, path.substringBeforeLast('/')).first.values.firstOrNull() ?: ""
+            when (it.code) {
+                207 -> {
+                    val xml = it.body?.bytes()
+                    if (xml == null || xml.isEmpty()) ""
+                    else parseMultistatus(xml, path.substringBeforeLast('/')).first.values.firstOrNull() ?: ""
+                }
+                404 -> ""   // 远端无此文件（合法状态，由调用方判断语义）
+                else -> throw SyncException("PROPFIND $path -> ${it.code}", it.code)   // fail-closed：服务器错误不得静默降级 LWW
+            }
         }
     }
 

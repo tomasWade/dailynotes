@@ -124,7 +124,8 @@
 | 点删除 | `DELETE` 远端 → 删缓存 → toast；离线时删除按钮置灰 |
 | 设置页「全量刷新」 | 清 cache-state.json → 重新对账（=重建缓存） |
 
-**没有的东西**（v0.1 砍掉的，这是 B 档的简化本质）：离线写队列、冲突文件合并、tombstone、应用层乐观锁。代价与兜底见 §5.4。
+**没有的东西**（v0.1 砍掉的，这是 B 档的简化本质）：离线写队列、冲突文件合并、tombstone。代价与兜底见 §5.4。
+**v0.1.8+ 加回的**：应用层乐观锁——保存前比对远端 etag 与 state 记录，不符（含远端 404=已被别处删除）抛 `SyncConflictException` 拒绝覆盖，本地缓存留 `*.conflict-local-<ts>.md` 副本（防 pull 覆盖丢输入）。已知限制：检查与 PUT 之间有 TOCTOU 窗口（≈附件上传时长，SFTPGo 不支持条件 PUT 无法根除）；`etagOf` 对服务器错误 fail-closed，不静默降级 LWW。
 
 ### 5.2 SyncEngine 接口（领域层只认这个）
 
