@@ -42,6 +42,17 @@ class WebDavSyncEngineTest {
     }
 
     @Test
+    fun `etagOf 与 put 返回一致且不存在返回空`() = runBlocking {
+        engine.mkdir("t-diary")
+        val putEtag = engine.put("t-diary/g.md", "g v1".toByteArray())
+        assertEquals(putEtag, engine.etagOf("t-diary/g.md"), "etagOf 应与 put 返回一致")
+        val putEtag2 = engine.put("t-diary/g.md", "g v2".toByteArray())
+        assertEquals(putEtag2, engine.etagOf("t-diary/g.md"), "内容变化后 etagOf 反映新值")
+        assertEquals("", engine.etagOf("t-diary/不存在.md"), "不存在的文件应返回空串")
+        engine.delete("t-diary/g.md")
+    }
+
+    @Test
     fun `put get list roundtrip`() = runBlocking {
         engine.mkdir("t-diary")
         val body = "# 测试日记内容 🎉".toByteArray()

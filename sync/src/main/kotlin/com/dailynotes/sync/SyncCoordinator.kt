@@ -46,6 +46,11 @@ class SyncCoordinator(
         engine.delete(path)
     }
 
+    /** 单文件远端 etag（应用层乐观锁用）；不存在/不支持返回 "" */
+    suspend fun engineEtag(path: String): Etag = withContext(Dispatchers.IO) {
+        engine.etagOf(path)
+    }
+
     private suspend fun listAllFiles(): Map<String, Etag> {
         val all = mutableMapOf<String, Etag>()
         for (top in topDirs) {

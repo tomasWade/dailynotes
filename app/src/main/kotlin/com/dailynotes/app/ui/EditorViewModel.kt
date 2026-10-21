@@ -45,9 +45,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             }
             val syncer = CacheSyncer(getApplication(), store)
             val text: String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                val fromCache = syncer.cache.read(relPath)?.toString(Charsets.UTF_8)
-                // 缓存文件缺失但 state 显示远端有 → 拉回，防空白误保存覆盖远端
-                fromCache ?: syncer.recover(relPath)?.toString(Charsets.UTF_8)
+                runCatching {
+                    val fromCache = syncer.cache.read(relPath)?.toString(Charsets.UTF_8)
+                    // 缓存文件缺失但 state 显示远端有 → 拉回，防空白误保存覆盖远端
+                    fromCache ?: syncer.recover(relPath)?.toString(Charsets.UTF_8)
+                }.getOrNull()
             }
             _state.value = UiState(
                 relPath = relPath,
@@ -153,6 +155,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     _state.value.copy(saving = false, error = "未配置服务器，仅写入了本地缓存")
                 }
                 onSaved()
+            } catch (e: com.dailynotes.app.data.SyncConflictException) {
+                _state.value = _state.value.copy(
+                    saving = false,
+                    error = "远端已有更新版本，本次保存未覆盖。请返回后点「同步」拉取新内容，再继续编辑。",
+                )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     saving = false,

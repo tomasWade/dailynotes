@@ -5,6 +5,10 @@ import com.dailynotes.app.diary.DiaryParser
 import com.dailynotes.sync.SyncCoordinator
 import com.dailynotes.sync.WebDavSyncEngine
 
+/** 应用层乐观锁冲突：远端 etag 与本地记录不一致（别处已更新），保存被拒绝 */
+class SyncConflictException(val relPath: String) :
+    Exception("远端已有更新版本：$relPath")
+
 /**
  * B 档同步门面：SAF 缓存 + cache-state 对账 + WebDAV 推拉删，三端（主页/笔记/编辑器）共用。
  * 所有方法都可能抛异常，由调用方决定提示方式（需求 6：失败仅弹提示）。
@@ -52,7 +56,9 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
     }
 
     /**
-     * 保存推送（LWW）：先推正文引用的未同步附件，再推文件本体，更新 cache-state。
+     * 保存推送：先推正文引用的未同步附件，再推文件本体，更新 cache-state。
+     * 应用层乐观锁（设计 §5.3 M0 结论）：PUT 前比对远端 etag 与 state 记录，
+     * 不一致 = 别处已更新 → 抛 [SyncConflictException]，不覆盖（防旧内容 LWW 压掉新内容）。
      * 注意调用方应已把 bytes 写入缓存（失败时本地仍有内容可看）。
      * 返回 false=未配置服务器（仅本地模式，不抛异常）。
      */
@@ -63,6 +69,15 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         val c = coordinator()
         val state = CacheState.parse(cache.readState())
         val files = state.files.toMutableMap()
+
+        // 乐观锁检查（已同步过的文件才查；新文件跳过）
+        val knownEtag = files[relPath]
+        if (knownEtag != null) {
+            val remote = c.engineEtag(relPath)
+            if (remote.isNotBlank() && remote != knownEtag) {
+                throw SyncConflictException(relPath)
+            }
+        }
 
         for (ref in DiaryParser.attachmentRefs(text)) {
             if (files[ref] == null) {

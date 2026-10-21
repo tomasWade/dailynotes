@@ -124,6 +124,8 @@ class WebDavSyncEngine(
         }
     }
 
+    override suspend fun etagOf(path: String): Etag = fetchEtag(path)
+
     private fun parseMultistatus(xml: ByteArray, dirPath: String): Pair<Map<String, Etag>, List<String>> {
         val doc = DocumentBuilderFactory.newInstance()
             .apply { isNamespaceAware = true }
