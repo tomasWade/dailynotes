@@ -116,6 +116,17 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
     private suspend fun safeRead(path: String): ByteArray? =
         abandonOnTimeout(SAF_OP_TIMEOUT_MS, "读取本地缓存 $path") { cache.read(path) }
 
+    /** 批量安全读（列表构建路径用，修复 loadEntries 单读 O(N²)：1500 篇逐读 13 分钟 → 秒级）。
+     *  预算按条目缩放并封顶（基数 30s + 1s/条，上限 300s）：正常 N 次 open ≈ 毫秒级/条，
+     *  慢而未死的 provider 也有余量；超时走 abandon 语义（放弃等待、释放锁）。
+     *  已接受的 tradeoff（review F2）：>180ms/条 的极慢 provider 会从「慢成功」变「超时报错」——
+     *  5 分钟级列表加载本身已是坏 UX，报错+手动重试优于无界等待。 */
+    suspend fun readCacheBatch(dir: String, names: List<String>): Map<String, ByteArray> =
+        abandonOnTimeout(
+            minOf(SAF_OP_TIMEOUT_MS + names.size * 1_000L, 300_000L),
+            "批量读取本地缓存 $dir ×${names.size}",
+        ) { cache.readBatch(dir, names) }
+
     /** 公开的安全读（编辑器/阅读页入口用）：裸 cache.read 在 provider 假死时会永久挂起，
      *  绕过本类全部超时防护（R2-M1） */
     suspend fun readCache(path: String): ByteArray? = safeRead(path)

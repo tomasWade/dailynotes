@@ -37,13 +37,12 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val syncer = CacheSyncer(getApplication(), store)
-                syncer.listCache("notes")
-                    .filter { NoteParser.isNote(it) }
-                    .sortedDescending()
-                    .mapNotNull { name ->
-                        val content = syncer.readCache("notes/$name")?.toString(Charsets.UTF_8) ?: ""
-                        NoteParser.parse(name, content)
-                    }
+                // 批量读（同 HomeViewModel：单读每文件列两次目录，O(N²)）
+                val names = syncer.listCache("notes").filter { NoteParser.isNote(it) }.sortedDescending()
+                val contents = syncer.readCacheBatch("notes", names)
+                names.mapNotNull { name ->
+                    NoteParser.parse(name, contents[name]?.toString(Charsets.UTF_8) ?: "")
+                }
             }
             _state.value = _state.value.copy(entries = entries, loading = false)
             } catch (e: kotlinx.coroutines.CancellationException) {

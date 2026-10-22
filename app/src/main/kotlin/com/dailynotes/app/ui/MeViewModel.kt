@@ -104,10 +104,15 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun scanOrphansInternal(): List<String> = withContext(Dispatchers.IO) {
         val cache = SafCache(getApplication(), store.treeUri())
+        val syncer = CacheSyncer(getApplication(), store)
         val referenced = mutableSetOf<String>()
         for (dir in listOf("diary", "notes")) {
-            for (name in cache.list(dir)) {
-                val text = cache.read("$dir/$name")?.toString(Charsets.UTF_8) ?: continue
+            // 批量读（v0.2.5 同型全扫）：旧逐文件 read 每次列全目录两次（O(N²)），
+            // 1481 篇日记时进本页即卡 10 分钟级——与主页列表空白同病
+            val names = syncer.listCache(dir)
+            val contents = syncer.readCacheBatch(dir, names)
+            for (name in names) {
+                val text = contents[name]?.toString(Charsets.UTF_8) ?: continue
                 referenced += DiaryParser.attachmentRefs(text)
             }
         }
@@ -161,18 +166,29 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val cache = SafCache(getApplication(), store.treeUri())
-                val count = withContext(Dispatchers.IO) {
+                val (count, readFailed) = withContext(Dispatchers.IO) {
                     val resolver = getApplication<Application>().contentResolver
                     var n = 0
+                    var failed = 0
                     resolver.openOutputStream(uri, "wt")?.use { out ->
                         ZipOutputStream(out.buffered()).use { zip ->
+                            // 批量读（v0.2.5 同型全扫）：旧逐文件 read 每次列全目录两次（O(N²)），
+                            // 1481 篇导出同卡 10 分钟级。按父目录分组批量读；zip 条目集合不变，
+                            // 同目录内顺序不变（跨子目录因 groupBy 连续化，zip 读取无感知）。
+                            // 备份工件禁止静默缺条目：readBatch 吞掉的 IO 失败必须显式计数上报（review MEDIUM）
+                            val syncer = CacheSyncer(getApplication(), store)
                             for (dir in listOf("diary", "notes", "attachments")) {
-                                for (rel in cache.listRecursive(dir)) {
-                                    val bytes = cache.read(rel) ?: continue
-                                    zip.putNextEntry(ZipEntry(rel))
-                                    zip.write(bytes)
-                                    zip.closeEntry()
-                                    n++
+                                val rels = cache.listRecursive(dir)
+                                for ((parent, group) in rels.groupBy { it.substringBeforeLast('/') }) {
+                                    val contents = syncer.readCacheBatch(parent, group.map { it.substringAfterLast('/') })
+                                    failed += group.size - contents.size
+                                    for (rel in group) {
+                                        val bytes = contents[rel.substringAfterLast('/')] ?: continue
+                                        zip.putNextEntry(ZipEntry(rel))
+                                        zip.write(bytes)
+                                        zip.closeEntry()
+                                        n++
+                                    }
                                 }
                             }
                             cache.readState()?.let { s ->
@@ -182,9 +198,16 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
                             }
                         }
                     } ?: throw IllegalStateException("无法打开导出目标")
-                    n
+                    n to failed
                 }
-                _state.value = _state.value.copy(loading = false, info = "已导出 $count 个文件")
+                _state.value = _state.value.copy(
+                    loading = false,
+                    info = if (readFailed > 0) {
+                        "已导出 $count 个文件，⚠️ $readFailed 个读取失败未包含——请重试或检查存储"
+                    } else {
+                        "已导出 $count 个文件"
+                    },
+                )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(loading = false, error = "导出失败：${e.message}")
             }

@@ -74,13 +74,12 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val syncer = CacheSyncer(getApplication(), store)
-                val list = syncer.listCache("diary")
-                    .filter { DiaryParser.isDiary(it) }
-                    .sortedDescending()
-                    .mapNotNull { name ->
-                        val content = syncer.readCache("diary/$name")?.toString(Charsets.UTF_8) ?: ""
-                        DiaryParser.parse(name, content)
-                    }
+                val names = syncer.listCache("diary").filter { DiaryParser.isDiary(it) }.sortedDescending()
+                // 批量读（修复单读 O(N²)：read(path) 每次列两次目录找路径，1500 篇逐读 ≈ 13 分钟）
+                val contents = syncer.readCacheBatch("diary", names)
+                val list = names.mapNotNull { name ->
+                    DiaryParser.parse(name, contents[name]?.toString(Charsets.UTF_8) ?: "")
+                }
                 com.dailynotes.app.data.AttachmentUriCache.putAll(syncer.urisUnderCache("attachments"))
                 list
                 }

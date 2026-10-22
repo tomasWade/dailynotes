@@ -63,6 +63,27 @@ class SafCache(context: Context, treeUriString: String) {
         }
     }
 
+    /** 批量读：一次列目录建 name→DocumentFile 映射，再逐个 openInputStream。
+     *  修复单读 O(N²)：read(path) 每次要列两次目录找路径（diary/ 1500 项时单次 ~0.5s，
+     *  1481 篇逐读 ≈ 13 分钟，列表长时间空白）；本方法全目录只列一次，N 次打开。
+     *  单条打开失败/读异常跳过（runCatching），该条不出现在结果里——调用方按缺失=空内容处理
+     *  （条目仍在列表；点开走编辑器单读路径，那里失败会显式报错）。目录不存在返回空 Map。 */
+    fun readBatch(dir: String, names: List<String>): Map<String, ByteArray> {
+        val base = walkTo(dir) ?: return emptyMap()
+        val byName = base.listFiles().associateBy { it.name }
+        val out = mutableMapOf<String, ByteArray>()
+        for (n in names) {
+            val f = byName[n]?.takeIf { it.isFile } ?: continue
+            val bytes = runCatching {
+                resolver.openInputStream(f.uri)?.use { input ->
+                    ByteArrayOutputStream().also { input.copyTo(it) }.toByteArray()
+                }
+            }.getOrNull()
+            if (bytes != null) out[n] = bytes
+        }
+        return out
+    }
+
     fun read(path: String): ByteArray? {
         val segments = path.trim('/').split("/").filter { it.isNotBlank() }
         val name = segments.last()
