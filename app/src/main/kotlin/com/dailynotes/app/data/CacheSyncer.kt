@@ -138,6 +138,10 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
     suspend fun listCache(dir: String): List<String> =
         abandonOnTimeout(SAF_OP_TIMEOUT_MS, "列目录 $dir") { cache.list(dir) }
 
+    /** 安全列目录带 mtime（列表快照对账用） */
+    suspend fun listWithMtimeCache(dir: String): List<Pair<String, Long>> =
+        abandonOnTimeout(SAF_OP_TIMEOUT_MS, "列目录 $dir") { cache.listWithMtime(dir) }
+
     /** 安全批量解析附件 Uri（R3-M1）。注意 urisUnder 是逐目录 listFiles（非单次 IPC），
      *  故用放大的遍历预算（R6-L5） */
     suspend fun urisUnderCache(dir: String): Map<String, android.net.Uri> =

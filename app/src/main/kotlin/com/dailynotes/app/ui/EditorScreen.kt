@@ -65,7 +65,8 @@ fun EditorScreen(
     onDelete: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsState()
-    var previewMode by rememberSaveable { mutableStateOf(false) }
+    // 三态：null=load 未决（不渲染编辑/预览框架，防「先进编辑再弹回预览」的初值闪现，v0.2.7）
+    var previewMode by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var modeDecided by rememberSaveable { mutableStateOf(false) }
     var viewImage by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
@@ -102,15 +103,18 @@ fun EditorScreen(
                 actions = {
                     // 手动切换即视为「已决定」：用户在 load 完成前点的切换不许被迟到的 initialPreview 覆盖
                     // （v0.2.6 前症状：load 慢时点「编辑」→ load 完成被强拉回预览，要点两次）
-                    TextButton(onClick = { previewMode = !previewMode; modeDecided = true }) {
-                        Text(if (previewMode) "编辑" else "预览")
+                    TextButton(
+                        onClick = { previewMode = !(previewMode ?: true); modeDecided = true },
+                        enabled = previewMode != null,
+                    ) {
+                        Text(if (previewMode == true) "编辑" else "预览")
                     }
                     if (onDelete != null) {
                         IconButton(onClick = { confirmDelete = true }) {
                             Icon(Icons.Filled.Delete, contentDescription = "删除")
                         }
                     }
-                    if (!previewMode) {
+                    if (previewMode == false) {
                         IconButton(
                             onClick = {
                                 pickImage.launch(
@@ -144,9 +148,10 @@ fun EditorScreen(
                 .padding(padding)
                 .padding(horizontal = 12.dp),
         ) {
-            if (state.loading) {
-                // load 期间渲染整页占位而非空编辑框（旧版初值 previewMode=false 会先闪一个
-                // 空编辑框，load 完成后又跳预览——用户看到「空框→跳预览」的错误序列）
+            if (state.loading || (previewMode == null && !state.loadFailed)) {
+                // load 未决（loading 或 previewMode 三态的 null）：整页占位，不渲染编辑/预览框架
+                // （旧版初值 previewMode=false 会先闪编辑器骨架，load 完成又跳预览——「先进编辑再弹回」）
+                // loadFailed 例外：渲染编辑框+错误行+禁用保存（永久转圈像挂死，R10-M2）
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -155,7 +160,7 @@ fun EditorScreen(
                 ) {
                     CircularProgressIndicator()
                 }
-            } else if (previewMode) {
+            } else if (previewMode == true) {
                 Column(
                     Modifier
                         .fillMaxWidth()

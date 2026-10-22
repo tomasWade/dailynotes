@@ -128,6 +128,40 @@ class SafCache(context: Context, treeUriString: String) {
         return emptyList()
     }
 
+    /** 列目录内文件名+mtime——列表快照对账用。
+     *  ⚠️ 单次 raw query 实现（R10-H1）：documentfile 的 listFiles() 只查 document_id，
+     *  每项 name/isFile/lastModified 是独立 query（1+3N 次 IPC ≈ 1481 篇时 4400+ 次，慢 provider
+     *  上快路径照样数秒）。这里一个 cursor 拿 display_name+mime+last_modified，共 1 次 IPC。 */
+    fun listWithMtime(dir: String): List<Pair<String, Long>> {
+        val base = walkTo(dir) ?: return emptyList()
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+            root.uri, DocumentsContract.getDocumentId(base.uri),
+        )
+        val out = mutableListOf<Pair<String, Long>>()
+        runCatching {
+            resolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                ),
+                null, null, null,
+            )?.use { c ->
+                val iName = c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val iMime = c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                val iMtime = c.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                while (c.moveToNext()) {
+                    val name = c.getString(iName) ?: continue
+                    val mime = c.getString(iMime) ?: continue
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
+                    out.add(name to (c.getLong(iMtime)))
+                }
+            }
+        }
+        return out
+    }
+
     /** 递归列出目录下全部文件（含子目录），返回根相对路径 */
     fun listRecursive(dir: String): List<String> {
         val base = walkTo(dir) ?: return emptyList()
