@@ -14,3 +14,6 @@ server/probe-files/
 *.log
 .DS_Store
 *.apk
+
+# 私人部署文档/笔记，永不入库（放 *-private/ 目录）
+*-private/

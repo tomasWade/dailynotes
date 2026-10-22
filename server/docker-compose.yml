@@ -19,8 +19,8 @@ services:
       # 坑2: 默认 admin 环境变量不生效，从 JSON 导入用户
       - SFTPGO_LOADDATA_FROM=/etc/sftpgo/loaddata.json
     ports:
-      # 真机验收：手机经 Tailscale (100.64.0.2) 或局域网 (192.168.1.122) 直连 WebDAV
-      # 不绑死 Tailscale IP：tailscale0 接口晚于 docker 启动会导致绑定失败
+      # 手机 App 经局域网或 Tailscale IP 直连 WebDAV（App 填 http://<server-ip>:18090）
+      # 不绑死特定接口：tailscale0 接口晚于 docker 启动会导致绑定失败
       # NAT 内网环境无公网暴露，Basic auth 保护
       - "18080:8080"   # web 管理界面 + REST API
       - "18090:8090"   # WebDAV（App/probe.sh 打这里）
