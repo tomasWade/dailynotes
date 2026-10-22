@@ -211,7 +211,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         for (d in result.deleted) {
             safeDelete(d)
             files.remove(d)
-            if (d.startsWith("attachments/")) AttachmentUriCache.remove(d)
+            // Uri 缓存失效由 SafCache.delete 内部维护（R9-L2 去冗余）
         }
         val now = System.currentTimeMillis()
         try {

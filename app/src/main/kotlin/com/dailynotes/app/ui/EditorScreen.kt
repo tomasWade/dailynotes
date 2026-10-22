@@ -100,7 +100,9 @@ fun EditorScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = { previewMode = !previewMode }) {
+                    // 手动切换即视为「已决定」：用户在 load 完成前点的切换不许被迟到的 initialPreview 覆盖
+                    // （v0.2.6 前症状：load 慢时点「编辑」→ load 完成被强拉回预览，要点两次）
+                    TextButton(onClick = { previewMode = !previewMode; modeDecided = true }) {
                         Text(if (previewMode) "编辑" else "预览")
                     }
                     if (onDelete != null) {
@@ -143,10 +145,17 @@ fun EditorScreen(
                 .padding(horizontal = 12.dp),
         ) {
             if (state.loading) {
-                Text("加载中…", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(4.dp))
-            }
-
-            if (previewMode) {
+                // load 期间渲染整页占位而非空编辑框（旧版初值 previewMode=false 会先闪一个
+                // 空编辑框，load 完成后又跳预览——用户看到「空框→跳预览」的错误序列）
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else if (previewMode) {
                 Column(
                     Modifier
                         .fillMaxWidth()

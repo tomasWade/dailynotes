@@ -32,6 +32,7 @@ class SafCache(context: Context, treeUriString: String) {
             ?: throw IllegalStateException("无法创建文件: $path")
         resolver.openOutputStream(target.uri, "wt")?.use { it.write(bytes) }
             ?: throw IllegalStateException("无法写入: $path")
+        AttachmentUriCache.put(path.trim('/'), target.uri)
     }
 
     /** 批量写同一目录：一次 listFiles 拿现有 {name→DocumentFile}（listFiles 结果自带 uri），
@@ -60,6 +61,9 @@ class SafCache(context: Context, treeUriString: String) {
                 ?: throw IllegalStateException("无法创建文件: $dir/$name")
             resolver.openOutputStream(target.uri, "wt")?.use { it.write(bytes) }
                 ?: throw IllegalStateException("无法写入: $dir/$name")
+            // 前缀逻辑与 readBatch 对称（dir 为空时不产生 "/" 前导死键，R9-L1）
+            val prefix = dir.trim('/').let { if (it.isEmpty()) "" else "$it/" }
+            AttachmentUriCache.put("$prefix$name", target.uri)
         }
     }
 
@@ -71,6 +75,11 @@ class SafCache(context: Context, treeUriString: String) {
     fun readBatch(dir: String, names: List<String>): Map<String, ByteArray> {
         val base = walkTo(dir) ?: return emptyMap()
         val byName = base.listFiles().associateBy { it.name }
+        // 顺手回填 Uri 缓存（byName 自带 uri，零额外 IPC）——列表加载后单文件打开即命中免列举
+        val prefix = dir.trim('/').let { if (it.isEmpty()) "" else "$it/" }
+        for (f in byName.values) {
+            if (f.isFile && f.name != null) AttachmentUriCache.put("$prefix${f.name}", f.uri)
+        }
         val out = mutableMapOf<String, ByteArray>()
         for (n in names) {
             val f = byName[n]?.takeIf { it.isFile } ?: continue
@@ -85,13 +94,29 @@ class SafCache(context: Context, treeUriString: String) {
     }
 
     fun read(path: String): ByteArray? {
-        val segments = path.trim('/').split("/").filter { it.isNotBlank() }
+        val p = path.trim('/')
+        // Uri 缓存命中：免两次全目录列举（v0.2.6 修复——1481 项目录下 findFile 模式单开一篇 ~2.3s）
+        AttachmentUriCache.get(p)?.let { cached ->
+            if (cached == Uri.EMPTY) return null // 负缓存：此前解析过，确认不存在
+            runCatching {
+                resolver.openInputStream(cached)?.use { input ->
+                    return ByteArrayOutputStream().also { input.copyTo(it) }.toByteArray()
+                }
+            }
+            // openInputStream 失败（Uri 因外部改动失效）→ 落入下方 findFile 实时解析自愈
+        }
+        val segments = p.split("/").filter { it.isNotBlank() }
         val name = segments.last()
         var cur: DocumentFile = root
         for (seg in segments.dropLast(1)) {
-            cur = cur.findFile(seg)?.takeIf { it.isDirectory } ?: return null
+            cur = cur.findFile(seg)?.takeIf { it.isDirectory } ?: run {
+                AttachmentUriCache.put(p, null); return null // 负缓存：防对缺失文件反复全目录列举
+            }
         }
-        val file = cur.findFile(name)?.takeIf { it.isFile } ?: return null
+        val file = cur.findFile(name)?.takeIf { it.isFile } ?: run {
+            AttachmentUriCache.put(p, null); return null
+        }
+        AttachmentUriCache.put(p, file.uri)
         return resolver.openInputStream(file.uri)?.use { input ->
             ByteArrayOutputStream().also { input.copyTo(it) }.toByteArray()
         }
@@ -147,16 +172,21 @@ class SafCache(context: Context, treeUriString: String) {
 
     /** 文件的 content Uri（Coil 加载用）；不存在返回 null */
     fun uri(path: String): Uri? {
-        val segments = path.trim('/').split("/").filter { it.isNotBlank() }
+        val p = path.trim('/')
+        AttachmentUriCache.get(p)?.let { return it.takeIf { it != Uri.EMPTY } }
+        val segments = p.split("/").filter { it.isNotBlank() }
         val name = segments.last()
         var cur: DocumentFile = root
         for (seg in segments.dropLast(1)) {
             cur = cur.findFile(seg)?.takeIf { it.isDirectory } ?: return null
         }
-        return cur.findFile(name)?.takeIf { it.isFile }?.uri
+        val found = cur.findFile(name)?.takeIf { it.isFile }?.uri
+        AttachmentUriCache.put(p, found)
+        return found
     }
 
     fun delete(path: String) {
+        AttachmentUriCache.remove(path.trim('/'))
         val segments = path.trim('/').split("/").filter { it.isNotBlank() }
         val name = segments.last()
         var cur: DocumentFile = root

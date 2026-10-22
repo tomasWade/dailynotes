@@ -140,7 +140,6 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
             for (p in paths) {
                 try {
                     syncer.delete(p)
-                    AttachmentUriCache.remove(p)
                     ok++
                 } catch (_: Exception) {
                     failed++
