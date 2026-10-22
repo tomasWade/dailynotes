@@ -70,7 +70,8 @@ class SafCache(context: Context, treeUriString: String) {
     }
 
     /** 递归列出目录下全部文件的 path→Uri 映射。
-     *  一次 IPC 拿整棵子树，替代逐文件 findFile（后者每次都列目录，列表滑动卡顿根因） */
+     *  逐目录一次 listFiles（每个子目录一次 IPC），替代逐文件 findFile（后者每个文件都列目录，
+     *  列表滑动卡顿根因）。整棵树耗时随子目录数线性增长——外层调用应配遍历级超时预算（见 CacheSyncer）。 */
     fun urisUnder(dir: String): Map<String, Uri> {
         val base = walkTo(dir) ?: return emptyMap()
         val out = mutableMapOf<String, Uri>()
@@ -115,9 +116,25 @@ class SafCache(context: Context, treeUriString: String) {
         cur.findFile(name)?.delete()
     }
 
+    /** 双文件冗余：先写 bak 再写主文件，半写损坏只可能坏其一——
+     *  主文件半断 → 读侧 JSON 校验失败 → 回退 bak（上一轮完整内容，最多丢最近一次 checkpoint）。
+     *  全量同步期间 checkpoint 会把写次数放大几十倍，单文件 truncate+write 的损坏窗口不可接受。 */
     fun writeState(json: String) {
-        write(".dailynotes/cache-state.json", json.toByteArray(Charsets.UTF_8))
+        val bytes = json.toByteArray(Charsets.UTF_8)
+        write(STATE_BAK, bytes)
+        write(STATE_MAIN, bytes)
     }
 
-    fun readState(): String? = read(".dailynotes/cache-state.json")?.toString(Charsets.UTF_8)
+    fun readState(): String? {
+        read(STATE_MAIN)?.toString(Charsets.UTF_8)?.let { if (isParsable(it)) return it }
+        return read(STATE_BAK)?.toString(Charsets.UTF_8)?.takeIf { isParsable(it) }
+    }
+
+    private fun isParsable(json: String): Boolean =
+        runCatching { org.json.JSONObject(json); true }.getOrDefault(false)
+
+    private companion object {
+        const val STATE_MAIN = ".dailynotes/cache-state.json"
+        const val STATE_BAK = ".dailynotes/cache-state.json.bak"
+    }
 }

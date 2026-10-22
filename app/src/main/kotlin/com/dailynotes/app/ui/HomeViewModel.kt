@@ -10,6 +10,7 @@ import com.dailynotes.app.diary.DiaryParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.update
 
 class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -41,21 +42,27 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(error = "未配置服务器，仅显示本地缓存（去「设置」配置）")
             return
         }
-        _state.value = _state.value.copy(loading = true, error = null)
+        _state.value = _state.value.copy(loading = true, error = null, info = "正在对账拉取…")
         viewModelScope.launch {
             try {
                 // 网络部分内部已 IO；SAF 写缓存也在此离开主线程
                 val s = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    syncer.pull()
+                    syncer.pull { written, total ->
+                        _state.update { it.copy(info = "同步中 $written/$total") }
+                    }
                 }
                 loadEntries()
-                _state.value = _state.value.copy(
-                    loading = false,
-                    info = "同步：更新 ${s.updated} · 删除 ${s.deleted} · 未变 ${s.unchanged}",
-                )
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        info = "同步：更新 ${s.updated} · 删除 ${s.deleted} · 未变 ${s.unchanged}",
+                    )
+                }
             } catch (e: Exception) {
                 loadEntries()
-                _state.value = _state.value.copy(loading = false, error = "拉取失败，显示本地缓存：${e.message}")
+                _state.update {
+                    it.copy(loading = false, info = null, error = "拉取失败，显示本地缓存：${e.message}")
+                }
             }
         }
     }
@@ -64,24 +71,31 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     fun loadEntries() {
         if (store.treeUri().isBlank()) return
         viewModelScope.launch {
-            val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val syncer = CacheSyncer(getApplication(), store)
-                val list = syncer.cache.list("diary")
+                val list = syncer.listCache("diary")
                     .filter { DiaryParser.isDiary(it) }
                     .sortedDescending()
                     .mapNotNull { name ->
-                        val content = syncer.cache.read("diary/$name")?.toString(Charsets.UTF_8) ?: ""
+                        val content = syncer.readCache("diary/$name")?.toString(Charsets.UTF_8) ?: ""
                         DiaryParser.parse(name, content)
                     }
-                com.dailynotes.app.data.AttachmentUriCache.putAll(syncer.cache.urisUnder("attachments"))
+                com.dailynotes.app.data.AttachmentUriCache.putAll(syncer.urisUnderCache("attachments"))
                 list
+                }
+                _state.update {
+                    it.copy(
+                        entries = entries,
+                        dateSet = entries.map { d -> d.date }.toSet(),
+                        entriesVersion = it.entriesVersion + 1,
+                    )
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = "读取本地缓存失败：${e.message}") }
             }
-            _state.value = _state.value.copy(
-                entries = entries,
-                dateSet = entries.map { it.date }.toSet(),
-                loading = false,
-                entriesVersion = _state.value.entriesVersion + 1,
-            )
         }
     }
 }

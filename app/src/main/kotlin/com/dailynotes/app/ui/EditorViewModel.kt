@@ -50,7 +50,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             var remoteShouldHave = false
             val text: String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 // read 失败不应连带跳过 recover（否则静默空白 → 误保存覆盖远端），各自独立捕获
-                val fromCache = runCatching { syncer.cache.read(relPath)?.toString(Charsets.UTF_8) }
+                val fromCache = runCatching { syncer.readCache(relPath)?.toString(Charsets.UTF_8) }
                     .onFailure { readFailed = true }
                     .getOrNull()
                 val t = fromCache ?: runCatching { syncer.recover(relPath)?.toString(Charsets.UTF_8) }.getOrNull()
@@ -145,7 +145,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     val stamp = now.format(DateTimeFormatter.ofPattern("HHmmss"))
                     val rand = List(4) { "0123456789abcdef".random() }.joinToString("")
                     val rel = "attachments/$bucket/${stamp}_$rand.$ext"
-                    syncer.cache.write(rel, bytes)
+                    syncer.writeCache(rel, bytes)
                     pendingAttachments.add(rel)
                     rel
                 }

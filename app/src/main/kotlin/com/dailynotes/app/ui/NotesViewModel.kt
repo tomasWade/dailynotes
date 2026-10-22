@@ -34,17 +34,23 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         viewModelScope.launch {
-            val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val syncer = CacheSyncer(getApplication(), store)
-                syncer.cache.list("notes")
+                syncer.listCache("notes")
                     .filter { NoteParser.isNote(it) }
                     .sortedDescending()
                     .mapNotNull { name ->
-                        val content = syncer.cache.read("notes/$name")?.toString(Charsets.UTF_8) ?: ""
+                        val content = syncer.readCache("notes/$name")?.toString(Charsets.UTF_8) ?: ""
                         NoteParser.parse(name, content)
                     }
             }
             _state.value = _state.value.copy(entries = entries, loading = false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(error = "读取本地缓存失败：${e.message}")
+            }
         }
     }
 

@@ -124,7 +124,7 @@ private fun PagerPageContent(relPath: String, dataVersion: Long) {
         text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val syncer = com.dailynotes.app.data.CacheSyncer(context, SettingsStore(context))
             runCatching {
-                syncer.cache.read(relPath)?.toString(Charsets.UTF_8)
+                syncer.readCache(relPath)?.toString(Charsets.UTF_8)
                     ?: syncer.recover(relPath)?.toString(Charsets.UTF_8)
             }.getOrNull()
         } ?: ""
