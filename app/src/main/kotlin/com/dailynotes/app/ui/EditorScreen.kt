@@ -50,6 +50,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.dailynotes.app.diary.DiaryParser
 
@@ -241,7 +242,10 @@ fun EditorScreen(
 
     // 全屏看图
     viewImage?.let { ref ->
-        Dialog(onDismissRequest = { viewImage = null }) {
+        Dialog(
+            onDismissRequest = { viewImage = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
             Box(
                 Modifier
                     .fillMaxSize()

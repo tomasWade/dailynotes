@@ -30,4 +30,9 @@ object AttachmentUriCache {
     fun remove(path: String) {
         cache.remove(path)
     }
+
+    /** 清空全部缓存（切换缓存文件夹后旧 Uri 全部失效） */
+    fun clear() {
+        cache.evictAll()
+    }
 }

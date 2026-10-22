@@ -19,7 +19,7 @@ check() { # name expected actual(desc)
 
 status() { # method path [extra curl args...]
   local m=$1 p=$2; shift 2
-  curl -s -u "$AUTH" -X "$m" "$BASE$p" -o /tmp/opencode/probe_body -w "%{http_code}" "$@"
+  curl -s -u "$AUTH" -X "$m" "$BASE$p" -o /dev/null -w "%{http_code}" "$@"
 }
 
 file_etag() { # path -> 该文件的 getetag（Depth 0）

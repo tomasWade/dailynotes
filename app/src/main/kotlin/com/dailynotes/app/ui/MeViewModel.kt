@@ -90,7 +90,12 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val orphans = scanOrphansInternal()
-                _state.value = _state.value.copy(scanning = false, orphans = orphans)
+                _state.value = _state.value.copy(
+                    scanning = false,
+                    orphans = orphans,
+                    // 区分「没扫过」与「扫了没有」（R2-L5）；scanOrphans 进入时已置 null，此处无需保旧值
+                    cleanupInfo = if (orphans.isEmpty()) "扫描完成，没有发现孤儿附件" else null,
+                )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(scanning = false, cleanupInfo = "扫描失败：${e.message}")
             }
@@ -106,6 +111,8 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
                 referenced += DiaryParser.attachmentRefs(text)
             }
         }
+        // 一次 IPC 预解析全部附件 Uri，清理页网格渲染全程零 SAF IPC（R1-M2）
+        AttachmentUriCache.putAll(cache.urisUnder("attachments"))
         cache.listRecursive("attachments").filter { it !in referenced }
     }
 

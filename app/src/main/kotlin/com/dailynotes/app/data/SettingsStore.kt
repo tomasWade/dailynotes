@@ -35,6 +35,8 @@ class SettingsStore(context: Context) {
 
     fun saveTreeUri(uri: Uri) {
         prefs.edit().putString(KEY_TREE_URI, uri.toString()).apply()
+        // 换树后旧 Uri 全部失效，防止清理页/列表渲染空白（R2-L4）
+        AttachmentUriCache.clear()
     }
 
     private companion object {

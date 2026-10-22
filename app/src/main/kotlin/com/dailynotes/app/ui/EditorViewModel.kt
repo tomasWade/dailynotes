@@ -4,6 +4,7 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.dailynotes.app.data.AttachmentUriCache
 import com.dailynotes.app.data.CacheSyncer
 import com.dailynotes.app.data.SafCache
 import com.dailynotes.app.data.SettingsStore
@@ -99,7 +100,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (toDelete.isNotEmpty()) {
             runCatching {
                 val cache = SafCache(getApplication(), treeUri)
-                toDelete.forEach { cache.delete(it) }
+                toDelete.forEach {
+                    cache.delete(it)
+                    AttachmentUriCache.remove(it)
+                }
             }
         }
         pendingAttachments.clear()
