@@ -52,10 +52,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     if (editPath != null) {
         val editorVm: EditorViewModel = viewModel()
         val date = editPath.removePrefix("diary/").removeSuffix(".md")
-        val title = DiaryParser.parseDate("$date.md")?.let { DiaryParser.dateLabel(it) } ?: editPath
+        val shortTitle = DiaryParser.parseDate("$date.md")
+            ?.let { "${it.monthValue}月${it.dayOfMonth}日" } ?: editPath
         EditorScreen(
             relPath = editPath,
-            title = "日记 · $title",
+            title = "日记 · $shortTitle",
             onBack = {
                 editorVm.discard()
                 editing = null

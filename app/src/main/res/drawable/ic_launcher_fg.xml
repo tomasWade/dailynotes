@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- dailynotes 图标前景：白纸日历 + 橙色页眉 + 三行字 + 句号（写作的意象）
+     viewport 108，安全区 66x66 居中（21..87），笔划全部落在 24..84 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 白纸（圆角矩形 35,27 - 73,85, r=5） -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,27 h28 a5,5 0 0 1 5,5 v48 a5,5 0 0 1 -5,5 h-28 a5,5 0 0 1 -5,-5 v-48 a5,5 0 0 1 5,-5 z" />
+
+    <!-- 橙色页眉（上圆角，压住纸顶 12dp） -->
+    <path
+        android:fillColor="#E76F51"
+        android:pathData="M40,27 h28 a5,5 0 0 1 5,5 v7 h-38 v-7 a5,5 0 0 1 5,-5 z" />
+
+    <!-- 日历装订环 x2（深灰，从页眉上方穿出） -->
+    <path
+        android:fillColor="#2F3B3A"
+        android:pathData="M41.5,23.5 a2.5,2.5 0 0 1 2.5,2.5 v5 a2.5,2.5 0 0 1 -5,0 v-5 a2.5,2.5 0 0 1 2.5,-2.5 z" />
+    <path
+        android:fillColor="#2F3B3A"
+        android:pathData="M61.5,23.5 a2.5,2.5 0 0 1 2.5,2.5 v5 a2.5,2.5 0 0 1 -5,0 v-5 a2.5,2.5 0 0 1 2.5,-2.5 z" />
+
+    <!-- 三行文字（灰，第二条短，圆角端点） -->
+    <path
+        android:fillColor="#AEBDBB"
+        android:pathData="M41.5,49 h23 a1.5,1.5 0 0 1 0,3 h-23 a1.5,1.5 0 0 1 0,-3 z" />
+    <path
+        android:fillColor="#AEBDBB"
+        android:pathData="M41.5,58 h16 a1.5,1.5 0 0 1 0,3 h-16 a1.5,1.5 0 0 1 0,-3 z" />
+    <path
+        android:fillColor="#AEBDBB"
+        android:pathData="M41.5,67 h19 a1.5,1.5 0 0 1 0,3 h-19 a1.5,1.5 0 0 1 0,-3 z" />
+
+    <!-- 句号（橙，句子写完了） -->
+    <path
+        android:fillColor="#E76F51"
+        android:pathData="M64,75.5 a3.2,3.2 0 1 0 0.01,0 z" />
+</vector>

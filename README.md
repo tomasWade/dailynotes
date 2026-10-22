@@ -10,6 +10,22 @@
 
 设计文档见 `docs/app-design.md`，开发计划见 `docs/development-plan.md`。
 
+## 界面预览
+
+| 主页 · 日记信息流 | 日历 · 断档可视/补记任意一天 |
+|---|---|
+| ![主页](docs/screenshots/home_list.png) | ![日历](docs/screenshots/home_calendar.png) |
+
+| 阅读 · 左右滑切上/下一篇 | 编辑 · Markdown + 插图 |
+|---|---|
+| ![阅读](docs/screenshots/reader.png) | ![编辑](docs/screenshots/editor_new.png) |
+
+| 笔记 · 卡片速记 | 我 · 统计/导出/附件清理 |
+|---|---|
+| ![笔记](docs/screenshots/notes.png) | ![我](docs/screenshots/me.png) |
+
+截图为 API 35 模拟器连接真实自托管服务端（SFTPGo）的实拍数据。
+
 ## 服务端部署
 
 ```bash

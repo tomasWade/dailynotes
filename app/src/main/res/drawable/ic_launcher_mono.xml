@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- themed icon（Android 13+ 单色版）：同前景形状，系统整体 tint，用透明度分层 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M40,27 h28 a5,5 0 0 1 5,5 v48 a5,5 0 0 1 -5,5 h-28 a5,5 0 0 1 -5,-5 v-48 a5,5 0 0 1 5,-5 z" />
+
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M41.5,49 h23 a1.5,1.5 0 0 1 0,3 h-23 a1.5,1.5 0 0 1 0,-3 z" />
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M41.5,58 h16 a1.5,1.5 0 0 1 0,3 h-16 a1.5,1.5 0 0 1 0,-3 z" />
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M41.5,67 h19 a1.5,1.5 0 0 1 0,3 h-19 a1.5,1.5 0 0 1 0,-3 z" />
+
+    <path
+        android:fillColor="#B3FFFFFF"
+        android:pathData="M41.5,23.5 a2.5,2.5 0 0 1 2.5,2.5 v5 a2.5,2.5 0 0 1 -5,0 v-5 a2.5,2.5 0 0 1 2.5,-2.5 z" />
+    <path
+        android:fillColor="#B3FFFFFF"
+        android:pathData="M61.5,23.5 a2.5,2.5 0 0 1 2.5,2.5 v5 a2.5,2.5 0 0 1 -5,0 v-5 a2.5,2.5 0 0 1 2.5,-2.5 z" />
+</vector>
