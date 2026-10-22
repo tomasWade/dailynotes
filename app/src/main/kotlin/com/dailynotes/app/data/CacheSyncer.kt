@@ -6,7 +6,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeoutOrNull
 import com.dailynotes.app.diary.DiaryParser
 import com.dailynotes.sync.SyncCoordinator
 import com.dailynotes.sync.WebDavSyncEngine
@@ -34,7 +33,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         // SAF binder 调用无超时：DocumentsProvider 假死时协程会永久挂起并持有 stateMutex，
         // 之后所有同步排队假转圈（换机全量同步必现场景）。防护：
         // 1) 单次 SAF 操作 30s「放弃等待」（见 abandonOnTimeout：binder 不响应 interrupt，
-        //    唯一有效模式是 async+await，超时放弃等待而非中断线程，锁必释放）
+        //    有效模式是 async 派发+轮询放弃等待——⚠️ 不要改回 withTimeoutOrNull{await()}，有实锤 TCE race）
         // 2) pull 每 50 个文件落一次 cache-state + 中止前补终 checkpoint（断点续传，进度永不丢）
         // 3) 网络阶段不设总预算（OkHttp 单请求 10/30/30s 已兜底，总预算会把慢网全量卡死在零进度）
         private const val SAF_OP_TIMEOUT_MS = 30_000L
@@ -73,20 +72,43 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
 
     private fun coordinator(): SyncCoordinator = SyncCoordinator(engine())
 
-    /** SAF 操作「放弃等待」：async 派发后 await，超时不再等（也不 interrupt——binder 不响应中断，
-     *  R1 实验证实 runInterruptible/withContext 都必须等 block 结束，超时永远不返回）。
-     *  await 挂起点可取消，所以超时必返回、stateMutex 必释放；僵尸协程留 safScope 自生自灭。
-     *  超时抛 IllegalStateException（刻意不用 CancellationException，避免被上层 catch(Exception) 误吞
-     *  且不污染结构化取消）。 */
+    /** SAF 操作「放弃等待」：async 派发后轮询完成状态，超时不再等（也不 interrupt——
+     *  binder 不响应中断，R1 实验证实 runInterruptible/withContext 都必须等 block 结束）。
+     *  超时抛 IllegalStateException（刻意不用 CancellationException，避免被上层 catch(Exception)
+     *  误吞且不污染结构化取消）；僵尸协程留 safScope 自生自灭，锁必释放（delay 可取消，
+     *  外层取消从 delay 传出，withLock 的 finally 释放锁）。
+     *
+     *  ⚠️ 刻意不用 withTimeoutOrNull{ deferred.await() }（2026-10-22 实锤）：其恢复链存在
+     *  TimeoutCancellationException 归属 race——block 数十 ms 内成功完成时，恢复路径仍可能被
+     *  误取消/误抛「超时」异常（实测：await 已返回 ok，300ms 后协程仍 catch 到超时 ISE，
+     *  栈穿 abandonOnTimeout$1/ScopeCoroutine.afterResume），成功的调用被 race 成假超时，
+     *  导致 pull 首步 safeReadState 永远失败。轮询版行为完全透明，等价且无此雷。
+     *  首轮立即检查 + 递增 poll（10→200ms）避免固定 50ms 下限；isCompleted 后走 await()
+     *  （已完成时立即返回，无 race——race 在 withTimeout 不在 await）。 */
     private suspend fun <T> abandonOnTimeout(timeoutMs: Long, what: String, block: () -> T): T {
         val deferred = safScope.async { runCatching { block() } }
-        return withTimeoutOrNull(timeoutMs) { deferred.await() }
-            ?.getOrThrow()
-            ?: throw IllegalStateException("$what 超时（${timeoutMs / 1000}s），SAF 存储无响应")
+        val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
+        var poll = 10L
+        while (!deferred.isCompleted) {
+            if (android.os.SystemClock.elapsedRealtime() >= deadline) {
+                throw IllegalStateException("$what 超时（${timeoutMs / 1000}s），SAF 存储无响应")
+            }
+            kotlinx.coroutines.delay(poll)
+            poll = (poll * 2).coerceAtMost(200L)
+        }
+        return deferred.await().getOrThrow()
     }
 
     private suspend fun safeWrite(path: String, bytes: ByteArray) =
         abandonOnTimeout(SAF_OP_TIMEOUT_MS, "写入本地缓存 $path") { cache.write(path, bytes) }
+
+    /** 批量安全写（pull 全量路径用）：一次 listFiles 直查 uri，免逐文件全目录扫描。
+     *  预算按条目数缩放（30s 基数 + 每条目 1s 余量）：一批 ≈100 次 binder 操作，
+     *  固定 30s 会让慢而未死的 provider（>300ms/文件）从「慢成功」变「永久超时」 */
+    private suspend fun safeWriteBatch(dir: String, entries: List<Pair<String, ByteArray>>) =
+        abandonOnTimeout(SAF_OP_TIMEOUT_MS + entries.size * 1_000L, "批量写入本地缓存 $dir ×${entries.size}") {
+            cache.writeBatch(dir, entries)
+        }
 
     private suspend fun safeDelete(path: String) =
         abandonOnTimeout(SAF_OP_TIMEOUT_MS, "删除本地缓存 $path") { cache.delete(path) }
@@ -135,11 +157,26 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         var written = 0
         var lastCheckpointed = 0
         try {
-            for (f in result.updated) {
+            // 按目录分批批量写：writeBatch 一次 listFiles 拿全目录 {name→uri}，
+            // 免旧逐文件 write 的每文件两次全目录扫描（实测约 100 倍提速；批粒度 listFiles，
+            // 严格复杂度仍是 O(N²/批量)，数据量级下够用。2026-10-22 性能诊断）。
+            // 批大小=CHECKPOINT_EVERY，checkpoint/断点/超时语义与旧逐文件版一致：
+            // 批内中断 → 本批不记 etag → 下轮重拉 ≤CHECKPOINT_EVERY 个。
+            // 无斜杠路径防御（R8-L1）：当前 TOP_DIRS 产物必带 '/'，此分支理论不可达；
+            // 若未来列表逻辑变化，substringBeforeLast('/') 会把文件名当目录建出 file.md/file.md，
+            // 故此类条目降级走单文件写（其 etag 进 files map，随后续批 checkpoint/补终一并落盘）。
+            val (rootFiles, dirFiles) = result.updated.partition { !it.path.contains('/') }
+            for (f in rootFiles) {
                 safeWrite(f.path, f.bytes)
                 files[f.path] = f.etag
                 written++
-                if (written % CHECKPOINT_EVERY == 0) {
+            }
+            val byDir = dirFiles.groupBy { it.path.substringBeforeLast('/') }
+            for ((dir, group) in byDir) {
+                for (batch in group.chunked(CHECKPOINT_EVERY)) {
+                    safeWriteBatch(dir, batch.map { it.path.substringAfterLast('/') to it.bytes })
+                    batch.forEach { files[it.path] = it.etag }
+                    written += batch.size
                     checkpointState(files.toMap(), state.lastSync) // lastSync 保旧值：本轮未完成不算"同步过"
                     lastCheckpointed = written
                     onProgress?.invoke(written, result.updated.size)
@@ -148,9 +185,10 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
-            // 中止前补终 checkpoint：内存 files 只含已写成功的项，批内任意位置断进度都不丢（R1-H3）。
-            // written > lastCheckpointed 才需要补——覆盖「边界 checkpoint 恰好失败」的情形（R6-L1）：
-            // 此时 written%50==0 但 lastCheckpointed 落后，原条件会误跳过补终。
+            // 中止前补终 checkpoint（R1-H3/R6-L1）：written > lastCheckpointed 只在
+            // 「批已写成功、批后 checkpoint 失败」时成立（批写失败时 written 未推进），
+            // 此时 files 已含该批 etag，补终成功即进度零丢失。
+            // 批内写失败（超时/SAF 错）：本批不记 etag，下轮重拉 ≤CHECKPOINT_EVERY 个，不丢数据。
             // catch Exception（rethrow CE）而非只 ISE：SecurityException 等 SAF 错误同样需要补终（R6-L2）。
             var note = "（已保存 $written/${result.updated.size}，重新点同步可从断点继续）"
             if (written > lastCheckpointed) {

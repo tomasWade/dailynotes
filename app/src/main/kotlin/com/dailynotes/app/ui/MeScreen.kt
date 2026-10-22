@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.dailynotes.app.BuildConfig
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -100,7 +101,7 @@ fun MeScreen(viewModel: MeViewModel = viewModel()) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("关于", style = MaterialTheme.typography.titleMedium)
-                Text("dailynotes v0.1.0", style = MaterialTheme.typography.bodySmall)
+                Text("dailynotes v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
                 Text(
                     "服务端：SFTPGo (WebDAV) · 同步：LWW + etag 对账",
                     style = MaterialTheme.typography.bodySmall,

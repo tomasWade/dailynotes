@@ -34,6 +34,35 @@ class SafCache(context: Context, treeUriString: String) {
             ?: throw IllegalStateException("无法写入: $path")
     }
 
+    /** 批量写同一目录：一次 listFiles 拿现有 {name→DocumentFile}（listFiles 结果自带 uri），
+     *  免逐文件 findFile。write() 每文件 findFile 两次、每次都列全目录——1481 文件全量同步
+     *  是 O(N²) 目录扫描，「几 MB 同步几分钟」的根因（2026-10-22 性能诊断）。
+     *  批内逐个写，任一失败即抛（已写的留在盘上，调用方 checkpoint 语义兜底：未 checkpoint
+     *  的批下轮重拉，粒度 = 批大小）。
+     *  重名防御（R1-M1）：existing 是批开始的快照，僵尸/并发写可能在此期间已建同名文件，
+     *  provider 对 createFile 同名会生成 "name (1)" 副本——发现名字不匹配时精确 findFile 一次
+     *  自愈（此时文件已在，单次列举代价可接受），只发生在异常交错路径。 */
+    fun writeBatch(dir: String, entries: List<Pair<String, ByteArray>>) {
+        val dirFile = dirFor(dir.trim('/').split("/").filter { it.isNotBlank() })
+        val existing = dirFile.listFiles().associateBy { it.name }
+        for ((name, bytes) in entries) {
+            val target = existing[name]?.takeIf { it.isFile }
+                ?: dirFile.createFile("application/octet-stream", name)?.let { created ->
+                    if (created.name == name) {
+                        created
+                    } else {
+                        // provider 生成了 "name (1)" 重名副本（快照过期的交错写）——删掉孤儿再精确找回
+                        created.delete()
+                        dirFile.findFile(name)?.takeIf { it.isFile }
+                            ?: throw IllegalStateException("无法创建文件: $dir/$name")
+                    }
+                }
+                ?: throw IllegalStateException("无法创建文件: $dir/$name")
+            resolver.openOutputStream(target.uri, "wt")?.use { it.write(bytes) }
+                ?: throw IllegalStateException("无法写入: $dir/$name")
+        }
+    }
+
     fun read(path: String): ByteArray? {
         val segments = path.trim('/').split("/").filter { it.isNotBlank() }
         val name = segments.last()
@@ -126,6 +155,8 @@ class SafCache(context: Context, treeUriString: String) {
     }
 
     fun readState(): String? {
+        // main 优先：bak 先写（writeState 顺序），中断会坏 bak 而 main 是上一轮完整版；
+        // main 损坏（半写）时回退 bak。两道都不可解析 → null（空 state，全量重拉自愈）
         read(STATE_MAIN)?.toString(Charsets.UTF_8)?.let { if (isParsable(it)) return it }
         return read(STATE_BAK)?.toString(Charsets.UTF_8)?.takeIf { isParsable(it) }
     }
