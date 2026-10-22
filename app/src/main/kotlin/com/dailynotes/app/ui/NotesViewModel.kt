@@ -29,15 +29,11 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadEntries() {
-        if (store.treeUri().isBlank()) {
-            _state.value = UiState(error = "请先到「设置」选择缓存文件夹")
-            return
-        }
         viewModelScope.launch {
             try {
                 val entries = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val syncer = CacheSyncer(getApplication(), store)
-                // 批量读（同 HomeViewModel：单读每文件列两次目录，O(N²)）
+                // 批量读（接口兼容保留；File 世界逐读即 O(1)）
                 val names = syncer.listCache("notes").filter { NoteParser.isNote(it) }.sortedDescending()
                 val contents = syncer.readCacheBatch("notes", names)
                 names.mapNotNull { name ->
@@ -55,7 +51,6 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 长按删除：远端删成功才落本地（B 档）；失败仅提示 */
     fun deleteEntry(fileName: String) {
-        if (store.treeUri().isBlank()) return
         _state.value = _state.value.copy(loading = true, error = null)
         viewModelScope.launch {
             try {

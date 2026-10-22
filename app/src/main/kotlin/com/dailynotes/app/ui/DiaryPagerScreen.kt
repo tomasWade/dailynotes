@@ -118,15 +118,21 @@ private fun PagerPageContent(relPath: String, dataVersion: Long) {
     var text by rememberSaveable(relPath) { mutableStateOf<String?>(null) }
     var viewImage by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // 页面进入视野/数据版本变化时读缓存（编辑保存返回后当前页能刷新）；SAF IO 离开主线程。
+    // 页面进入视野/数据版本变化时读缓存（编辑保存返回后当前页能刷新）；本地 IO 离开主线程。
     // 缓存缺失时走 recover 从远端拉回（与编辑器行为一致，否则这里显示空白）
     LaunchedEffect(relPath, dataVersion) {
+        val t0 = android.os.SystemClock.elapsedRealtime()
         text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val syncer = com.dailynotes.app.data.CacheSyncer(context, SettingsStore(context))
-            runCatching {
+            val r = runCatching {
                 syncer.readCache(relPath)?.toString(Charsets.UTF_8)
                     ?: syncer.recover(relPath)?.toString(Charsets.UTF_8)
             }.getOrNull()
+            com.dailynotes.app.data.DiagLog.log(
+                "pager",
+                "page[$relPath] v$dataVersion ${android.os.SystemClock.elapsedRealtime() - t0}ms -> ${if (r == null) "null" else "${r.length}ch"}",
+            )
+            r
         } ?: ""
     }
 

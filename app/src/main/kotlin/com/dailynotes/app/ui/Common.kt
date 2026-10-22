@@ -9,13 +9,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import android.net.Uri
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.dailynotes.app.data.SafCache
-import com.dailynotes.app.data.SettingsStore
+import com.dailynotes.app.data.FileCache
 
-/** 附件图片加载：uri 优先走进程缓存（列表滑动零 SAF IPC），miss 才解析并回填（含负缓存） */
+/** 附件图片加载（v0.3.0 File 模型）：文件在 App 私有目录，存在性本地 stat（微秒级），
+ *  直接给 Coil File 模型，无 SAF 寻址。 */
 @Composable
 fun AttachmentImage(
     imagePath: String,
@@ -23,21 +22,10 @@ fun AttachmentImage(
     contentScale: ContentScale = ContentScale.Crop,
 ) {
     val context = LocalContext.current
-    val uri = remember(imagePath) {
-        val cached = com.dailynotes.app.data.AttachmentUriCache.get(imagePath)
-        if (cached != null) {
-            cached.takeIf { it != Uri.EMPTY }
-        } else {
-            val resolved = runCatching {
-                val treeUri = SettingsStore(context).treeUri()
-                if (treeUri.isBlank()) null
-                else SafCache(context, treeUri).uri(imagePath)
-            }.getOrNull()
-            com.dailynotes.app.data.AttachmentUriCache.put(imagePath, resolved)
-            resolved
-        }
+    val file = remember(imagePath) {
+        runCatching { FileCache(context).file(imagePath) }.getOrNull()
     }
-    uri?.let {
+    file?.let {
         AsyncImage(
             model = it,
             contentDescription = "配图",

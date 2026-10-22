@@ -4,9 +4,8 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.dailynotes.app.data.AttachmentUriCache
+import com.dailynotes.app.data.DiagLog
 import com.dailynotes.app.data.CacheSyncer
-import com.dailynotes.app.data.SafCache
 import com.dailynotes.app.data.SettingsStore
 import com.dailynotes.app.diary.DiaryParser
 import kotlinx.coroutines.Dispatchers
@@ -41,32 +40,55 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.relPath == relPath) return
         _state.value = UiState(relPath = relPath, loading = true)
         viewModelScope.launch {
-            if (store.treeUri().isBlank()) {
-                _state.value = UiState(relPath, error = "请先到「设置」选择缓存文件夹")
-                return@launch
-            }
             val syncer = CacheSyncer(getApplication(), store)
             var readFailed = false
             var remoteShouldHave = false
+            val t0 = android.os.SystemClock.elapsedRealtime()
             val text: String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 // read 失败不应连带跳过 recover（否则静默空白 → 误保存覆盖远端），各自独立捕获
+                val t1 = android.os.SystemClock.elapsedRealtime()
                 val fromCache = runCatching { syncer.readCache(relPath)?.toString(Charsets.UTF_8) }
-                    .onFailure { readFailed = true }
+                    .onFailure { readFailed = true; DiagLog.log("editor", "readCache throw: ${it.javaClass.simpleName}: ${it.message}") }
                     .getOrNull()
-                val t = fromCache ?: runCatching { syncer.recover(relPath)?.toString(Charsets.UTF_8) }.getOrNull()
-                // 缓存与恢复都没拿到，但 state 显示远端应有此文件（如断网）→ 危险空白
-                remoteShouldHave = t == null && syncer.hasRemoteRecord(relPath)
+                val tRead = android.os.SystemClock.elapsedRealtime() - t1
+                DiagLog.log("editor", "load[$relPath] readCache ${tRead}ms -> ${if (fromCache == null) "null" else "${fromCache.length}ch"}")
+                var tRecover = -1L
+                val t = fromCache ?: runCatching {
+                    val t2 = android.os.SystemClock.elapsedRealtime()
+                    val r = syncer.recover(relPath)?.toString(Charsets.UTF_8)
+                    tRecover = android.os.SystemClock.elapsedRealtime() - t2
+                    r
+                }.getOrNull()
+                if (tRecover >= 0) DiagLog.log("editor", "load[$relPath] recover ${tRecover}ms -> ${if (t == null) "null" else "${t.length}ch"}")
+                // 缓存与恢复都没拿到，但远端可能已有此文件 → 危险空白：
+                // ① state 显示远端应有（如断网）② 服务器已配置但从未成功同步过（升级换目录/新装机，
+                //    cache-state 为空时 hasRemoteRecord 恒 false，离线保存会无锁 LWW 覆盖远端，R5-Issue1）
+                if (t == null) {
+                    val t3 = android.os.SystemClock.elapsedRealtime()
+                    val neverSynced = syncer.serverConfigured() && !store.everSynced()
+                    remoteShouldHave = syncer.hasRemoteRecord(relPath) || neverSynced
+                    DiagLog.log("editor", "load[$relPath] hasRemoteRecord ${android.os.SystemClock.elapsedRealtime() - t3}ms -> $remoteShouldHave${if (neverSynced) " (含 neverSynced 收紧)" else ""}")
+                }
                 t
             }
+            DiagLog.log(
+                "editor",
+                "load[$relPath] done ${android.os.SystemClock.elapsedRealtime() - t0}ms readFailed=$readFailed remoteShouldHave=$remoteShouldHave initialPreview=${!text.isNullOrBlank()}",
+            )
             // 读取彻底失败判定（只在「真的没拿到内容」时报错）：
-            // ① read 抛异常且 recover 也没拿到 ② 缓存缺失 + state 显示远端应有但 recover 失败（如断网）
+            // ① read 抛异常且 recover 也没拿到 ② 缓存缺失 + 远端应有但 recover 失败（断网/从未同步）
             // 注意：read 抛异常但 recover 成功（text!=null）→ 正常展示拉回的内容，不进错误态
             if ((readFailed && text == null) || remoteShouldHave) {
                 _state.value = UiState(
                     relPath,
                     loadFailed = true,
-                    error = "内容读取失败（缓存缺失且未能从服务器恢复，可能断网）。已禁用保存以防覆盖远端；" +
-                        "请恢复网络后在主页点「同步」后重试。",
+                    error = if (store.everSynced()) {
+                        "内容读取失败（缓存缺失且未能从服务器恢复，可能断网）。已禁用保存以防覆盖远端；" +
+                            "请恢复网络后在主页点「同步」后重试。"
+                    } else {
+                        "本地缓存为空且尚未完成过同步，无法确认服务器上是否已有这篇内容。" +
+                            "已禁用保存以防覆盖；请先在主页点「同步」完成首次同步后再编辑。"
+                    },
                 )
                 return@launch
             }
@@ -90,20 +112,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun cleanupOrphanAttachments(finalText: String) {
         if (pendingAttachments.isEmpty()) return
-        val treeUri = store.treeUri()
-        if (treeUri.isBlank()) {
-            pendingAttachments.clear()
-            return
-        }
         val referenced = DiaryParser.attachmentRefs(finalText).toSet()
         val toDelete = pendingAttachments.filter { it !in referenced }
         if (toDelete.isNotEmpty()) {
             runCatching {
-                val cache = SafCache(getApplication(), treeUri)
-                toDelete.forEach {
-                    cache.delete(it)
-                    AttachmentUriCache.remove(it)
-                }
+                val cache = com.dailynotes.app.data.FileCache(getApplication())
+                toDelete.forEach { cache.delete(it) }
             }
         }
         pendingAttachments.clear()
@@ -121,10 +135,6 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 从相册选图后调用：复制进缓存 attachments/YYYY-MM/ 并在正文末尾插入引用 */
     fun insertImage(source: Uri) {
-        if (store.treeUri().isBlank()) {
-            _state.value = _state.value.copy(error = "请先到「设置」选择缓存文件夹")
-            return
-        }
         viewModelScope.launch {
             try {
                 val syncer = CacheSyncer(getApplication(), store)
@@ -159,10 +169,6 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** 保存：写缓存 → 推未同步附件 → 推本体 → 更新 cache-state。失败仅提示（需求 6） */
     fun save(onSaved: () -> Unit = {}) {
         val relPath = _state.value.relPath ?: return
-        if (store.treeUri().isBlank()) {
-            _state.value = _state.value.copy(error = "请先到「设置」选择缓存文件夹")
-            return
-        }
         val text = _state.value.text
         _state.value = _state.value.copy(saving = true, error = null, savedOk = false)
         viewModelScope.launch {

@@ -63,6 +63,9 @@ fun EditorScreen(
     onSaved: () -> Unit,
     viewModel: EditorViewModel = viewModel(),
     onDelete: (() -> Unit)? = null,
+    // 从阅读页点「编辑」进入时传 true：用户意图明确是编辑，跳过预览态直接进编辑框
+    // （否则用户要在阅读页点一次编辑、编辑器里再点一次——「第二次才能编辑」的根源，v0.2.8）
+    startInEditMode: Boolean = false,
 ) {
     val state by viewModel.state.collectAsState()
     // 三态：null=load 未决（不渲染编辑/预览框架，防「先进编辑再弹回预览」的初值闪现，v0.2.7）
@@ -71,17 +74,34 @@ fun EditorScreen(
     var viewImage by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
 
+    // startInEdit 只对「本次进入」生效一次：旋转/进程重建后不重放（否则会把用户手动切回的预览强拉回编辑，review L1）
+    var startInEditApplied by rememberSaveable { mutableStateOf<String?>(null) }
+
     LaunchedEffect(relPath) {
-        modeDecided = false
+        if (startInEditMode && startInEditApplied != relPath) {
+            startInEditApplied = relPath
+            // 直接编辑模式：load 未决期间就先定编辑态（spinner 消失即编辑框，无预览中转）
+            previewMode = false
+            modeDecided = true
+        }
+        if (startInEditMode) {
+            modeDecided = true // 重建路径（startInEditApplied==relPath）：仍守住 decided，防止迟到 initialPreview 覆盖手动切换
+        } else {
+            modeDecided = false
+            startInEditApplied = null
+        }
+        com.dailynotes.app.data.DiagLog.log("editor-ui", "enter[$relPath] modeDecided=$modeDecided previewMode=$previewMode startInEdit=$startInEditMode")
         viewModel.load(relPath)
     }
 
     // 打开已有内容 → 预览态；新文件/空白 → 编辑态。只决定一次（手动切换、旋转不覆盖）
     LaunchedEffect(state.initialPreview) {
         val initial = state.initialPreview
+        com.dailynotes.app.data.DiagLog.log("editor-ui", "initialPreview effect fired: initial=$initial modeDecided=$modeDecided previewMode=$previewMode")
         if (!modeDecided && initial != null) {
             previewMode = initial
             modeDecided = true
+            com.dailynotes.app.data.DiagLog.log("editor-ui", "decide: previewMode=$initial")
         }
     }
 
@@ -104,7 +124,11 @@ fun EditorScreen(
                     // 手动切换即视为「已决定」：用户在 load 完成前点的切换不许被迟到的 initialPreview 覆盖
                     // （v0.2.6 前症状：load 慢时点「编辑」→ load 完成被强拉回预览，要点两次）
                     TextButton(
-                        onClick = { previewMode = !(previewMode ?: true); modeDecided = true },
+                        onClick = {
+                            val old = previewMode
+                            previewMode = !(previewMode ?: true); modeDecided = true
+                            com.dailynotes.app.data.DiagLog.log("editor-ui", "manual toggle: $old -> $previewMode")
+                        },
                         enabled = previewMode != null,
                     ) {
                         Text(if (previewMode == true) "编辑" else "预览")

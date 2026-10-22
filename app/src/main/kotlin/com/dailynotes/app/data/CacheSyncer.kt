@@ -38,9 +38,6 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         // 3) 网络阶段不设总预算（OkHttp 单请求 10/30/30s 已兜底，总预算会把慢网全量卡死在零进度）
         private const val SAF_OP_TIMEOUT_MS = 30_000L
 
-        /** 递归遍历专用预算（R6-L5）：urisUnder 实为逐目录 listFiles（每目录一次 IPC），
-         *  大附件树（多个月桶）整体耗时可观，慢 provider 上 30s 会误报失败 */
-        private const val SAF_TRAVERSAL_TIMEOUT_MS = 120_000L
         private const val CHECKPOINT_EVERY = 50
 
         // 放弃等待的僵尸协程归宿：SAF 调用（若）最终返回后自然结束回池。
@@ -59,8 +56,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         val lastSync: Long,
     )
 
-    val treeUri: String get() = store.treeUri()
-    val cache: SafCache by lazy { SafCache(context, store.treeUri()) }
+    val cache: FileCache by lazy { FileCache(context) }
 
     fun serverConfigured(): Boolean =
         store.serverUrl().isNotBlank() && store.username().isNotBlank()
@@ -91,7 +87,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         var poll = 10L
         while (!deferred.isCompleted) {
             if (android.os.SystemClock.elapsedRealtime() >= deadline) {
-                throw IllegalStateException("$what 超时（${timeoutMs / 1000}s），SAF 存储无响应")
+                throw IllegalStateException("$what 超时（${timeoutMs / 1000}s），本地存储无响应")
             }
             kotlinx.coroutines.delay(poll)
             poll = (poll * 2).coerceAtMost(200L)
@@ -142,11 +138,6 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
     suspend fun listWithMtimeCache(dir: String): List<Pair<String, Long>> =
         abandonOnTimeout(SAF_OP_TIMEOUT_MS, "列目录 $dir") { cache.listWithMtime(dir) }
 
-    /** 安全批量解析附件 Uri（R3-M1）。注意 urisUnder 是逐目录 listFiles（非单次 IPC），
-     *  故用放大的遍历预算（R6-L5） */
-    suspend fun urisUnderCache(dir: String): Map<String, android.net.Uri> =
-        abandonOnTimeout(SAF_TRAVERSAL_TIMEOUT_MS, "解析附件目录 $dir") { cache.urisUnder(dir) }
-
     private suspend fun safeReadState(): String? =
         abandonOnTimeout(SAF_OP_TIMEOUT_MS, "读取同步进度") { cache.readState() }
 
@@ -163,6 +154,7 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
     suspend fun pull(
         onProgress: ((written: Int, total: Int) -> Unit)? = null,
     ): PullSummary = stateMutex.withLock {
+        val t0 = android.os.SystemClock.elapsedRealtime()
         // 网络对账+下载（OkHttp 单请求超时兜底，不设总预算：慢网全量会被总预算卡死在零进度）
         val state = CacheState.parse(safeReadState())
         val result = coordinator().pull(state.files)
@@ -215,7 +207,6 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         for (d in result.deleted) {
             safeDelete(d)
             files.remove(d)
-            // Uri 缓存失效由 SafCache.delete 内部维护（R9-L2 去冗余）
         }
         val now = System.currentTimeMillis()
         try {
@@ -226,6 +217,8 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
                 "内容已全部同步到本地，仅进度记录保存失败——再点一次同步即可补记进度", e,
             )
         }
+        DiagLog.log("sync", "pull done ${android.os.SystemClock.elapsedRealtime() - t0}ms: updated=${result.updated.size} deleted=${result.deleted.size} unchanged=${result.unchangedCount}")
+        store.markEverSynced() // 至少一次成功同步（R5-Issue1 离线覆盖收紧的解除条件）
         PullSummary(result.updated.size, result.deleted.size, result.unchangedCount, now)
     }
 
@@ -261,7 +254,9 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
                 val copySaved = runCatching {
                     abandonOnTimeout(SAF_OP_TIMEOUT_MS, "写冲突副本") { cache.write(copyPath, bytes) }
                 }.isSuccess
-                throw SyncConflictException(relPath, remote.isBlank(), copySaved)
+                throw SyncConflictException(relPath, remote.isBlank(), copySaved).also {
+                    DiagLog.log("sync", "push[$relPath] CONFLICT: remoteEtag=${if (remote.isBlank()) "(deleted)" else "changed"} copySaved=$copySaved")
+                }
             }
         }
 
@@ -282,7 +277,20 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
             files.remove(relPath)
         }
         checkpointState(files, state.lastSync)
+        DiagLog.log("sync", "push[$relPath] ok: md=${bytes.size}B")
         return true
+    }
+
+    /** 上传诊断日志到服务端 logs/diag-<时间戳>.txt（logs/ 不在 TOP_DIRS，同步永不拉回手机端） */
+    suspend fun uploadDiag(text: String): String {
+        if (!serverConfigured()) throw IllegalStateException("未配置服务器")
+        val name = "logs/diag-" +
+            java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) +
+            ".txt"
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            engine().put(name, text.toByteArray(Charsets.UTF_8))
+        }
+        return name
     }
 
     /** 删除：远端删 + 缓存删 + state 移除；远端删失败抛异常（不落本地删除，防止下次拉回造成幽灵复活观感） */

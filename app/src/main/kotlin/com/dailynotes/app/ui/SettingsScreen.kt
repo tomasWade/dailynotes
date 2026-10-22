@@ -1,9 +1,5 @@
 package com.dailynotes.app.ui
 
-import android.content.Intent
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,23 +39,9 @@ fun SettingsScreen() {
     var username by remember { mutableStateOf(store.username()) }
     var password by remember { mutableStateOf(store.password()) }
     var rootPath by remember { mutableStateOf(store.rootPath()) }
-    var treeUri by remember { mutableStateOf(store.treeUri()) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var saved by remember { mutableStateOf(false) }
-
-    val folderPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-            )
-            store.saveTreeUri(uri)
-            treeUri = uri.toString()
-        }
-    }
 
     Column(
         modifier = Modifier
@@ -107,15 +89,6 @@ fun SettingsScreen() {
             },
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (saved) "已保存" else "保存") }
-
-        Text("缓存文件夹", style = MaterialTheme.typography.titleMedium)
-        Text(
-            if (treeUri.isEmpty()) "未选择（数据将缓存到所选文件夹）" else treeUri,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        OutlinedButton(onClick = { folderPicker.launch(null) }, modifier = Modifier.fillMaxWidth()) {
-            Text(if (treeUri.isEmpty()) "选择文件夹" else "更换文件夹")
-        }
 
         Button(
             onClick = {

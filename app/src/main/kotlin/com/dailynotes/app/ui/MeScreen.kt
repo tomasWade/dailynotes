@@ -14,6 +14,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -71,7 +72,7 @@ fun MeScreen(viewModel: MeViewModel = viewModel()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("数据", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "所有数据是缓存文件夹里的纯 Markdown 文件与图片，随时可用其他工具打开。",
+                    "数据为纯 Markdown 文件，缓存在应用私有目录（USB 连电脑可见）；服务器为唯一事实源，可随时导出 zip。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
@@ -93,6 +94,12 @@ fun MeScreen(viewModel: MeViewModel = viewModel()) {
                     }
                     OutlinedButton(onClick = { showCleanup = true }, enabled = !state.loading) {
                         Text("附件清理")
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // 诊断日志上传：真机不在 adb 范围，出问题时用户点此按钮把打点缓冲传到服务端 logs/
+                    TextButton(onClick = { viewModel.uploadDiag() }, enabled = !state.loading) {
+                        Text("上传诊断日志")
                     }
                 }
             }

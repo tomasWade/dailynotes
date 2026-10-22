@@ -17,6 +17,8 @@ import org.json.JSONObject
  */
 object ListCache {
 
+    private const val TREE_KEY = "filecache"
+
     data class CachedEntry(
         val mtime: Long,
         val preview: String,
@@ -25,12 +27,12 @@ object ListCache {
     )
 
     /** 读快照；无/损坏/树不匹配 → 空 Map（调用方走全量路径） */
-    fun load(context: Context, dir: String, treeUri: String): Map<String, CachedEntry> {
+    fun load(context: Context, dir: String): Map<String, CachedEntry> {
         val f = java.io.File(context.cacheDir, "list-$dir.json")
         if (!f.exists()) return emptyMap()
         return runCatching {
             val o = JSONObject(f.readText())
-            if (o.optString("tree") != treeUri) return emptyMap()
+            if (o.optString("tree") != TREE_KEY) return emptyMap()
             val entries = o.getJSONObject("entries")
             val out = HashMap<String, CachedEntry>(entries.length())
             for (k in entries.keys()) {
@@ -49,10 +51,10 @@ object ListCache {
     /** 写快照；失败吞掉（纯派生数据，丢了下次全量重建）。
      *  temp+rename 原子替换（R10-L3）：并发 loadEntries 的交错 writeText 会撕裂 JSON——
      *  撕裂虽能自愈（parse 失败→全量重建），但白费一次 14s 重建，rename 免之。 */
-    fun save(context: Context, dir: String, treeUri: String, entries: Map<String, CachedEntry>) {
+    fun save(context: Context, dir: String, entries: Map<String, CachedEntry>) {
         runCatching {
             val o = JSONObject()
-            o.put("tree", treeUri)
+            o.put("tree", TREE_KEY)
             val arr = JSONObject()
             for ((k, e) in entries) {
                 arr.put(k, JSONObject().put("m", e.mtime).put("p", e.preview).put("i", e.firstImage).put("t", e.truncated))

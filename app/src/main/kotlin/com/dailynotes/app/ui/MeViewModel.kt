@@ -4,10 +4,10 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.dailynotes.app.data.AttachmentUriCache
 import com.dailynotes.app.data.CacheState
+import com.dailynotes.app.data.DiagLog
 import com.dailynotes.app.data.CacheSyncer
-import com.dailynotes.app.data.SafCache
+import com.dailynotes.app.data.FileCache
 import com.dailynotes.app.data.SettingsStore
 import com.dailynotes.app.diary.DiaryParser
 import kotlinx.coroutines.Dispatchers
@@ -52,13 +52,9 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadStats() {
-        if (store.treeUri().isBlank()) {
-            _state.value = UiState(error = "请先到「设置」选择缓存文件夹")
-            return
-        }
         viewModelScope.launch {
             val (diaries, noteCount, state) = kotlinx.coroutines.withContext(Dispatchers.IO) {
-                val cache = SafCache(getApplication(), store.treeUri())
+                val cache = FileCache(getApplication())
                 Triple(
                     cache.list("diary").filter { DiaryParser.isDiary(it) },
                     cache.list("notes").count { com.dailynotes.app.note.NoteParser.isNote(it) },
@@ -82,10 +78,6 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 附件回收站：扫描全部 md 引用，找出零引用的缓存附件 */
     fun scanOrphans() {
-        if (store.treeUri().isBlank()) {
-            _state.value = _state.value.copy(cleanupInfo = "请先到「设置」选择缓存文件夹")
-            return
-        }
         _state.value = _state.value.copy(scanning = true, cleanupInfo = null)
         viewModelScope.launch {
             try {
@@ -103,7 +95,7 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun scanOrphansInternal(): List<String> = withContext(Dispatchers.IO) {
-        val cache = SafCache(getApplication(), store.treeUri())
+        val cache = FileCache(getApplication())
         val syncer = CacheSyncer(getApplication(), store)
         val referenced = mutableSetOf<String>()
         for (dir in listOf("diary", "notes")) {
@@ -117,14 +109,28 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         // 一次 IPC 预解析全部附件 Uri，清理页网格渲染全程零 SAF IPC（R1-M2）
-        AttachmentUriCache.putAll(cache.urisUnder("attachments"))
         cache.listRecursive("attachments").filter { it !in referenced }
+    }
+
+    /** 上传诊断日志（DiagLog 环形缓冲）到服务端 logs/，供真机问题远程排查 */
+    fun uploadDiag() {
+        _state.value = _state.value.copy(loading = true, error = null, info = null)
+        viewModelScope.launch {
+            try {
+                val syncer = CacheSyncer(getApplication(), store)
+                val name = withContext(Dispatchers.IO) { syncer.uploadDiag(DiagLog.dump()) }
+                _state.value = _state.value.copy(loading = false, info = "诊断日志已上传：$name")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(loading = false, error = "诊断日志上传失败：${e.message}")
+            }
+        }
     }
 
     /** 删除所选孤儿附件：远端删 + 缓存删 + state 移除 + uri 缓存失效；单文件失败不影响其余 */
     fun deleteOrphans(paths: List<String>) {
         if (paths.isEmpty()) return
-        if (store.treeUri().isBlank()) return
         val syncer = CacheSyncer(getApplication(), store)
         if (!syncer.serverConfigured()) {
             _state.value = _state.value.copy(
@@ -157,14 +163,10 @@ class MeViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 导出全部数据为 zip（三目录递归 + cache-state），写入用户选的目标 */
     fun exportTo(uri: Uri) {
-        if (store.treeUri().isBlank()) {
-            _state.value = _state.value.copy(error = "请先到「设置」选择缓存文件夹")
-            return
-        }
         _state.value = _state.value.copy(loading = true, error = null, info = null)
         viewModelScope.launch {
             try {
-                val cache = SafCache(getApplication(), store.treeUri())
+                val cache = FileCache(getApplication())
                 val (count, readFailed) = withContext(Dispatchers.IO) {
                     val resolver = getApplication<Application>().contentResolver
                     var n = 0

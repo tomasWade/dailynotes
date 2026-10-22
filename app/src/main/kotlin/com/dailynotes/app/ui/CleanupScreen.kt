@@ -53,7 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.dailynotes.app.data.SafCache
+import com.dailynotes.app.data.FileCache
 import com.dailynotes.app.data.SettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -81,10 +81,7 @@ fun CleanupScreen(viewModel: MeViewModel, onBack: () -> Unit) {
             scope.launch {
                 val msg = withContext(Dispatchers.IO) {
                     runCatching {
-                        val treeUri = SettingsStore(context).treeUri()
-                        if (treeUri.isBlank()) error("未选择缓存文件夹")
-                        val bytes = SafCache(context, treeUri).read(src)
-                            ?: error("缓存文件不存在：$src")
+                        val bytes = FileCache(context).read(src) ?: error("缓存文件不存在：$src")
                         context.contentResolver.openOutputStream(target, "wt")?.use {
                             it.write(bytes)
                         } ?: error("无法打开目标位置")

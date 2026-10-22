@@ -37,6 +37,7 @@ import java.time.YearMonth
 fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     var editing by rememberSaveable { mutableStateOf<String?>(null) }   // 完整 relPath
+    var editFromReader by rememberSaveable { mutableStateOf(false) }    // 从阅读页点「编辑」进入：直接进编辑态（v0.2.8）
     var reading by rememberSaveable { mutableStateOf<Int?>(null) }      // 阅读 pager 页码
     var calendarMode by rememberSaveable { mutableStateOf(false) }
     var calMonthText by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
@@ -44,7 +45,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
     fun openDate(date: LocalDate) {
         val idx = state.entries.indexOfFirst { it.date == date }
-        if (idx >= 0) reading = idx else editing = "diary/" + DiaryParser.fileNameOf(date)
+        if (idx >= 0) reading = idx else { editing = "diary/" + DiaryParser.fileNameOf(date); editFromReader = false }
     }
 
     // 编辑器优先（从 pager 进入编辑，返回时回 pager）
@@ -60,9 +61,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             onBack = {
                 editorVm.discard()
                 editing = null
+                editFromReader = false
             },
             onSaved = viewModel::loadEntries,
             viewModel = editorVm,
+            startInEditMode = editFromReader,
         )
         return
     }
@@ -73,7 +76,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             entries = state.entries,
             initialPage = readPage,
             dataVersion = state.entriesVersion,
-            onEdit = { editing = it },
+            onEdit = { editing = it; editFromReader = true },
             onBack = { reading = null },
         )
         return
@@ -117,7 +120,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         } else {
             if (state.entries.isEmpty() && !state.loading) {
                 Text(
-                    "还没有日记。点「今天」写下第一篇，或切到「日历」补记任意一天。",
+                    if (state.neverSynced) {
+                        "本地缓存为空且尚未同步过。点上方「同步」从服务器拉取你的数据（首次约 20 秒）。"
+                    } else {
+                        "还没有日记。点「今天」写下第一篇，或切到「日历」补记任意一天。"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.outline,
                     modifier = Modifier.padding(top = 32.dp),

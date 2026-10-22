@@ -6,7 +6,7 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 
-/** Coil 全局配置：content:// 无磁盘缓存会反复读 SAF 流（IPC），这里显式开启 */
+/** Coil 全局配置：显式开启磁盘缓存（File 模型默认不落盘，附件重复打开省解码） */
 class DailyNotesApp : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader =
