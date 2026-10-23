@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,11 +18,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -72,6 +82,7 @@ fun CalendarPanel(
     onMonthChange: (YearMonth) -> Unit,
     dates: Set<LocalDate>,
     onPick: (LocalDate) -> Unit,
+    onTitleClick: (() -> Unit)? = null,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
@@ -82,13 +93,71 @@ fun CalendarPanel(
             IconButton(onClick = { onMonthChange(month.minusMonths(1)) }) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "上月")
             }
-            Text("${month.year}年${month.monthValue}月", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${month.year}年${month.monthValue}月",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = if (onTitleClick != null) {
+                    Modifier
+                        .clickable(onClick = onTitleClick)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                } else Modifier,
+            )
             IconButton(onClick = { onMonthChange(month.plusMonths(1)) }) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "下月")
             }
         }
         MonthCalendar(month = month, dates = dates, onPick = onPick)
     }
+}
+
+/** 年月快速跳转选择器（日历标题点击 / 列表「跳年」共用）：年份横滑条 + 月份宫格，
+ *  点任意月份立即回调。年份倒序（最近在前）。 */
+@Composable
+fun YearMonthPickerDialog(
+    initial: YearMonth,
+    years: IntRange,
+    onPick: (YearMonth) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selYear by remember { mutableStateOf(initial.year.coerceIn(years.first, years.last)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("跳转到") },
+        text = {
+            Column {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(bottom = 10.dp),
+                ) {
+                    items((years.last downTo years.first).toList()) { y ->
+                        FilterChip(
+                            selected = y == selYear,
+                            onClick = { selYear = y },
+                            label = { Text("$y") },
+                        )
+                    }
+                }
+                (1..12).chunked(3).forEach { rowMonths ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    ) {
+                        rowMonths.forEach { m ->
+                            OutlinedButton(
+                                onClick = { onPick(YearMonth.of(selYear, m)) },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+                            ) { Text("${m}月") }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 @Composable

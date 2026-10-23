@@ -35,6 +35,11 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /** 轻量提示行（UI 本地事件用，如「该年没有日记」；不触碰 loading/entries） */
+    fun setInfo(msg: String?) {
+        _state.update { it.copy(info = msg) }
+    }
+
     fun refresh() {
         val syncer = CacheSyncer(getApplication(), store)
         if (!syncer.serverConfigured()) {
