@@ -16,7 +16,7 @@ from datetime import date, timedelta
 random.seed(42)
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/tmp/opencode/testdata"
 START = date(2026, 8, 22)
-END = date(2026, 10, 21)
+END = date(2026, 10, 23)
 W, H = 512, 288
 
 MORNING = [
