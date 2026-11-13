@@ -40,7 +40,9 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(info = msg) }
     }
 
-    fun refresh() {
+    /** [manual]=true 表示用户点了「同步」按钮：pull 在拿到 stateMutex 后清熔断真实探测
+     *  （init 的自动同步受熔断保护零等待失败；锁内清的竞态说明见 CacheSyncer.pull） */
+    fun refresh(manual: Boolean = false) {
         val syncer = CacheSyncer(getApplication(), store)
         if (!syncer.serverConfigured()) {
             loadEntries()
@@ -52,7 +54,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 // 网络部分内部已 IO；SAF 写缓存也在此离开主线程
                 val s = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    syncer.pull { written, total ->
+                    syncer.pull(manual = manual) { written, total ->
                         _state.update { it.copy(info = "同步中 $written/$total") }
                     }
                 }

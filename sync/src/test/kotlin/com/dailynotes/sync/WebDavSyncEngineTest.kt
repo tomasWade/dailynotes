@@ -1,6 +1,7 @@
 package com.dailynotes.sync
 
 import kotlinx.coroutines.runBlocking
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -13,6 +14,12 @@ class WebDavSyncEngineTest {
         username = System.getenv("DAV_USER") ?: "probe",
         password = System.getenv("DAV_PASS") ?: "probepass123",
     )
+
+    @BeforeTest
+    fun resetBreaker() {
+        // 进程级熔断是共享静态：容器没起时第一个连接失败会 trip，后续用例全部变熔断误报，先清
+        WebDavSyncEngine.resetBreaker()
+    }
 
     @Test
     fun `mkdir 幂等`() = runBlocking {

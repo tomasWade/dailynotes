@@ -16,6 +16,7 @@ class WebDavSyncEngine(
     baseUrl: String,
     username: String,
     password: String,
+    private val networkAvailable: (() -> Boolean)? = null,
 ) : SyncEngine {
 
     private val base = baseUrl.trimEnd('/')
@@ -24,10 +25,18 @@ class WebDavSyncEngine(
     companion object {
         // 共享连接池/线程池：CacheSyncer 每次同步都会 new engine，独立 client 会积累资源
         private val client: OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
+            // 自托管服务器（内网/Tailscale/VPS）TCP 握手 <1s，3s 已含一次 SYN 重传余量；
+            // 原值 10s 的代价：离线（SYN 黑洞）时每次打开 App/保存/翻页都干等满 10s 才失败
+            .connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
+
+        // 进程级熔断：CacheSyncer 每次操作都 new engine，熔断状态必须跨实例——放 companion
+        private val breaker = ServerBreaker()
+
+        /** 用户主动重试（手动点「同步」/保存）前调用：清熔断，让本次请求真实探测 */
+        fun resetBreaker() = breaker.reset()
     }
 
     private fun request(
@@ -35,14 +44,31 @@ class WebDavSyncEngine(
         path: String,
         body: RequestBody? = null,
         headers: Map<String, String> = emptyMap(),
-    ): okhttp3.Response = client.newCall(
-        Request.Builder()
-            .url(url(path))
-            .method(method, body)
-            .header("Authorization", authHeader)
-            .apply { headers.forEach { (k, v) -> header(k, v) } }
-            .build()
-    ).execute()
+    ): okhttp3.Response {
+        // 离线快速失败之一：系统无任何网络 → 毫秒级失败。预检不了「有网但服务器不可达」
+        // （最常见离线形态），那由熔断兜底
+        if (networkAvailable?.invoke() == false) throw SyncException("当前无网络连接")
+        breaker.check(base)
+        return try {
+            client.newCall(
+                Request.Builder()
+                    .url(url(path))
+                    .method(method, body)
+                    .header("Authorization", authHeader)
+                    .apply { headers.forEach { (k, v) -> header(k, v) } }
+                    .build()
+            ).execute()
+        } catch (e: java.io.IOException) {
+            // execute() 阶段失败 = 连接失败（拒连/DNS）或响应头等待超时（readTimeout，含在 execute 内）：
+            // 都说明「服务器不可达/无响应」，开熔断让冷却窗内后续操作零等待。
+            // 已拿到响应（哪怕 5xx）不走这里——服务器活着不熔断；execute() 返回后读 body 的
+            // 超时也不在此列（发生在 use{} 里）——慢而活着的服务器不被熔断误伤。
+            // ⚠️ 边界：接受连接但响应极慢的过载服务器（大 PROPFIND >30s）也会触发熔断 60s——
+            // 手动同步/保存会清熔断真实重试，可接受
+            breaker.trip(base)
+            throw SyncException("服务器连接不上：${e.message ?: e.javaClass.simpleName}", cause = e)
+        }
+    }
 
     private fun url(path: String): String {
         val encoded = path.split("/").joinToString("/") {

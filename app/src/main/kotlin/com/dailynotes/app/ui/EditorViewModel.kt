@@ -174,7 +174,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val syncer = CacheSyncer(getApplication(), store)
-                val pushed = syncer.push(relPath, text.toByteArray(Charsets.UTF_8), text)
+                // 保存是用户主动操作：push 拿到 stateMutex 后清熔断真实探测（锁内清防竞态，见 CacheSyncer.pull）
+                val pushed = syncer.push(relPath, text.toByteArray(Charsets.UTF_8), text, manual = true)
                 // 成功（含仅本地模式）：正文已入库、引用成立，不再是孤儿候选
                 pendingAttachments.clear()
                 _state.value = if (pushed) {

@@ -149,7 +149,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 Button(onClick = { openDate(LocalDate.now()) }, enabled = !state.loading) {
                     Text("今天")
                 }
-                Button(onClick = viewModel::refresh, enabled = !state.loading) {
+                Button(onClick = { viewModel.refresh(manual = true) }, enabled = !state.loading) {
                     Text("同步")
                 }
             }

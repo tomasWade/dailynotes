@@ -1,6 +1,8 @@
 package com.dailynotes.app.data
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,7 +24,7 @@ class SyncConflictException(
  * B 档同步门面：SAF 缓存 + cache-state 对账 + WebDAV 推拉删，三端（主页/笔记/编辑器）共用。
  * 所有方法都可能抛异常，由调用方决定提示方式（需求 6：失败仅弹提示）。
  */
-class CacheSyncer(context: Context, private val store: SettingsStore) {
+class CacheSyncer(private val context: Context, private val store: SettingsStore) {
 
     companion object {
         // cache-state.json 的 read-modify-write 全局串行锁：CacheSyncer 每次调用方都 new 实例，
@@ -62,8 +64,17 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
         store.serverUrl().isNotBlank() && store.username().isNotBlank()
 
     private fun engine(): com.dailynotes.sync.WebDavSyncEngine {
-        val base = (store.serverUrl().trimEnd('/') + "/" + store.rootPath().trim('/')).trimEnd('/')
-        return com.dailynotes.sync.WebDavSyncEngine(base, store.username(), store.password())
+        val base = (store.serverUrl().trimEnd('/') + "/" + store.rootPath().trimEnd('/')).trimEnd('/')
+        return com.dailynotes.sync.WebDavSyncEngine(base, store.username(), store.password(), ::networkAvailable)
+    }
+
+    /** 系统级「有网吗」预检（毫秒级）：完全无网时免等 connectTimeout。
+     *  判不了「有网但服务器不可达」（不在内网/服务器挂），那由 sync 层熔断兜底。
+     *  拿不到服务（极端 ROM）fail-open，退化为纯超时行为 */
+    private fun networkAvailable(): Boolean {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return true
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private fun coordinator(): SyncCoordinator = SyncCoordinator(engine())
@@ -150,10 +161,15 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
 
     /** 打开/手动同步：etag 对账拉取，写缓存，更新 cache-state（含 lastSync）。
      *  中断（任何异常）时已过 checkpoint 的文件不会重拉——下轮 etag 对账直接跳过。
-     *  [onProgress] 每写满 CHECKPOINT_EVERY 个文件回调 (written, total)，用于 UI 进度「194/1500」。 */
+     *  [onProgress] 每写满 CHECKPOINT_EVERY 个文件回调 (written, total)，用于 UI 进度「194/1500」。
+     *  [manual]=true 表示用户主动点击：拿到 stateMutex 后清熔断真实探测。必须在锁内清——
+     *  锁外清有竞态（自动同步正持锁等连接超时：手动 reset 是空操作 → 排队 → 自动同步失败
+     *  触发熔断 → 手动同步反被熔断挡下，报错还让用户「再点一次同步」） */
     suspend fun pull(
+        manual: Boolean = false,
         onProgress: ((written: Int, total: Int) -> Unit)? = null,
     ): PullSummary = stateMutex.withLock {
+        if (manual) com.dailynotes.sync.WebDavSyncEngine.resetBreaker()
         val t0 = android.os.SystemClock.elapsedRealtime()
         // 网络对账+下载（OkHttp 单请求超时兜底，不设总预算：慢网全量会被总预算卡死在零进度）
         val state = CacheState.parse(safeReadState())
@@ -228,8 +244,10 @@ class CacheSyncer(context: Context, private val store: SettingsStore) {
      * 不一致 = 别处已更新 → 抛 [SyncConflictException]，不覆盖（防旧内容 LWW 压掉新内容）。
      * 注意调用方应已把 bytes 写入缓存（失败时本地仍有内容可看）。
      * 返回 false=未配置服务器（仅本地模式，不抛异常）。
+     * [manual]=true 表示用户主动保存：拿到 stateMutex 后清熔断真实探测（竞态说明见 pull）。
      */
-    suspend fun push(relPath: String, bytes: ByteArray, text: String): Boolean = stateMutex.withLock {
+    suspend fun push(relPath: String, bytes: ByteArray, text: String, manual: Boolean = false): Boolean = stateMutex.withLock {
+        if (manual) com.dailynotes.sync.WebDavSyncEngine.resetBreaker()
         safeWrite(relPath, bytes)
         if (!serverConfigured()) return@withLock false
 
