@@ -25,10 +25,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
+      # ubuntu runner 预装 Android SDK（ANDROID_HOME + licenses 已接受），
+      # 直接补装本项目所需组件即可——setup-android@v3 会去装已下架的 tools 包而失败
       - name: Install SDK components
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       # gradle.properties 写死了原开发机路径 org.gradle.java.home=/usr/lib/jvm/jdk-17，
       # CI 上指向 setup-java 的 JAVA_HOME（改法与本地验证 :sync:test 时一致，不动仓库内容）
